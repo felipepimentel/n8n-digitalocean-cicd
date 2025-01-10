@@ -70,7 +70,7 @@ Before you begin, ensure you have:
 |----------|-------------|---------|
 | `DIGITALOCEAN_ACCESS_TOKEN` | DO API token | `dop_v1_...` |
 | `DOCKER_REGISTRY` | DO container registry | `registry.digitalocean.com/n8n-registry` |
-| `DO_SSH_KEY_ID` | SSH key fingerprint | `12:34:56:...` |
+| `DO_SSH_KEY_FINGERPRINT` | SSH key fingerprint | `3b:16:bf:e4:8b:00:8b:b8:59:8c:a9:d3:f0:19:45:fa` |
 | `N8N_DOMAIN` | Your domain | `n8n.yourdomain.com` |
 | `N8N_BASIC_AUTH_USER` | Admin username | `admin` (min 8 chars) |
 | `N8N_BASIC_AUTH_PASSWORD` | Admin password | `your-secure-pass` (min 12 chars) |

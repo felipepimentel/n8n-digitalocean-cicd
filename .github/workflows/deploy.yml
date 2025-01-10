@@ -9,7 +9,7 @@ on:
 env:
   # Required secrets
   DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-  DO_SSH_KEY_ID: ${{ secrets.DO_SSH_KEY_ID }}
+  DO_SSH_KEY_FINGERPRINT: ${{ secrets.DO_SSH_KEY_FINGERPRINT }}
   DO_SSH_PRIVATE_KEY: ${{ secrets.DO_SSH_PRIVATE_KEY }}
   N8N_DOMAIN: ${{ secrets.N8N_DOMAIN }}
   N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
@@ -44,7 +44,8 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.DO_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H *.digitalocean.com >> ~/.ssh/known_hosts
+          ssh-keyscan -H digitalocean.com >> ~/.ssh/known_hosts
+          ssh-keyscan -H registry.digitalocean.com >> ~/.ssh/known_hosts
 
       - name: Deploy n8n
         run: |

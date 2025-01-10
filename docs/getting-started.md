@@ -66,7 +66,7 @@ Before you begin, ensure you have:
      - Go to [Security Settings](https://cloud.digitalocean.com/account/security)
      - Click "Add SSH Key"
      - Paste the public key content (`cat ~/.ssh/do_n8n.pub`)
-     - Note the SSH key ID from the URL after adding
+     - Note the SSH key fingerprint shown after adding the key
 
 3. **Configure DNS**:
    - Add your domain to DigitalOcean:

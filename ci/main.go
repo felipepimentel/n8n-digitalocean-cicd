@@ -35,7 +35,7 @@ type Config struct {
 	doToken       string
 	registryURL   string
 	dropletName   string
-	sshKeyID      string
+	sshFingerprint string
 	domain        string
 	n8nVersion    string
 	slackWebhook  string
@@ -104,7 +104,7 @@ func loadConfig() Config {
 		doToken:       doToken,
 		registryURL:   registryURL,
 		dropletName:   dropletName,
-		sshKeyID:      sshKeyID,
+		sshFingerprint: sshKeyID,
 		domain:        domain,
 		n8nVersion:    n8nVersion,
 		slackWebhook:  slackWebhook,
@@ -248,7 +248,7 @@ func createRegistry(ctx context.Context, client *godo.Client) error {
 
 func createOrGetDroplet(ctx context.Context, client *godo.Client, config *Config, vpcID string) (*godo.Droplet, error) {
 	// Convert SSH key ID from string to int
-	sshKeyID, err := strconv.Atoi(config.sshKeyID)
+	sshKeyID, err := strconv.Atoi(config.sshFingerprint)
 	if err != nil {
 		time.Sleep(time.Second)
 
