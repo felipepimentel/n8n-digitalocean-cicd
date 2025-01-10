@@ -1,7 +1,8 @@
 linters:
+  disable-all: true
   enable:
     - gofmt
-    - golint
+    - revive
     - govet
     - errcheck
     - staticcheck
@@ -12,7 +13,7 @@ linters:
     - gosec
     - prealloc
     - nakedret
-    - exportloopref
+    - copyloopvar
     - gocritic
     - gocyclo
     - goimports
@@ -26,24 +27,25 @@ linters:
     - whitespace
     - wsl
     - goprintffuncname
-    - gomnd
-    - goerr113
+    - err113
     - godot
     - testpackage
     - nolintlint
     - asciicheck
     - exhaustive
-    - revive
+    - mnd
 
 linters-settings:
   govet:
-    check-shadowing: true
-  golint:
-    min-confidence: 0
+    enable:
+      - shadow
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+        disabled: false
   gocyclo:
     min-complexity: 15
-  maligned:
-    suggest-new: true
   goconst:
     min-len: 2
     min-occurrences: 2
@@ -85,17 +87,15 @@ linters-settings:
     capital: false
   dogsled:
     max-blank-identifiers: 2
-  gomnd:
-    settings:
-      mnd:
-        checks:
-          - argument
-          - case
-          - condition
-          - operation
-          - return
-          - assign
-  goerr113:
+  mnd:
+    checks:
+      - argument
+      - case
+      - condition
+      - operation
+      - return
+      - assign
+  err113:
     ignore-tests: true
   testpackage:
     skip-regexp: (export|internal)_test\.go
@@ -106,6 +106,12 @@ linters-settings:
     require-specific: false
 
 issues:
+  exclude-files:
+    - ".*\\.pb\\.go$"
+    - ".*\\.gen\\.go$"
+  exclude-dirs:
+    - vendor/
+    - third_party/
   exclude-rules:
     - path: _test\.go
       linters:
@@ -118,7 +124,7 @@ issues:
         - gocognit
         - scopelint
         - staticcheck
-        - goerr113
+        - err113
     - path: doc\.go
       linters:
         - gocyclo
@@ -130,19 +136,14 @@ issues:
         - gocognit
         - scopelint
         - staticcheck
-        - goerr113
+        - err113
 
 run:
-  deadline: 5m
+  timeout: 5m
   tests: true
-  skip-dirs:
-    - vendor/
-    - third_party/
-  skip-files:
-    - ".*\\.pb\\.go$"
-    - ".*\\.gen\\.go$"
 
 output:
-  format: colored-line-number
+  formats:
+    - format: colored-line-number
   print-issued-lines: true
   print-linter-name: true 

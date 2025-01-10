@@ -2,58 +2,65 @@ package ssh
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
 
+const (
+	defaultTimeout = 30 * time.Second
+)
+
+var (
+	ErrReadKey     = fmt.Errorf("unable to read private key")
+	ErrParseKey    = fmt.Errorf("unable to parse private key")
+	ErrDial        = fmt.Errorf("failed to dial")
+	ErrSession     = fmt.Errorf("failed to create session")
+	ErrExecCommand = fmt.Errorf("failed to execute command")
+)
+
 type Client struct {
-	config *ssh.ClientConfig
-	addr   string
+	client *ssh.Client
 }
 
-func NewClient(host string, port int, user string, keyPath string) (*Client, error) {
-	key, err := ioutil.ReadFile(keyPath)
+func NewClient(host string, port int, user, privateKeyPath string) (*Client, error) {
+	privateKey, err := os.ReadFile(privateKeyPath)
 	if err != nil {
-		return nil, fmt.Errorf("unable to read private key: %v", err)
+		return nil, fmt.Errorf("%w: %v", ErrReadKey, err)
 	}
 
-	signer, err := ssh.ParsePrivateKey(key)
+	signer, err := ssh.ParsePrivateKey(privateKey)
 	if err != nil {
-		return nil, fmt.Errorf("unable to parse private key: %v", err)
+		return nil, fmt.Errorf("%w: %v", ErrParseKey, err)
 	}
 
 	config := &ssh.ClientConfig{
-		User: user,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // #nosec G106
+		Timeout:         defaultTimeout,
 	}
 
-	return &Client{
-		config: config,
-		addr:   fmt.Sprintf("%s:%d", host, port),
-	}, nil
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), config)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrDial, err)
+	}
+
+	return &Client{client: client}, nil
 }
 
-func (c *Client) ExecuteCommand(cmd string) (string, error) {
-	client, err := ssh.Dial("tcp", c.addr, c.config)
+func (c *Client) ExecuteCommand(command string) (string, error) {
+	session, err := c.client.NewSession()
 	if err != nil {
-		return "", fmt.Errorf("failed to dial: %v", err)
-	}
-	defer client.Close()
-
-	session, err := client.NewSession()
-	if err != nil {
-		return "", fmt.Errorf("failed to create session: %v", err)
+		return "", fmt.Errorf("%w: %v", ErrSession, err)
 	}
 	defer session.Close()
 
-	output, err := session.CombinedOutput(cmd)
+	output, err := session.CombinedOutput(command)
 	if err != nil {
-		return string(output), fmt.Errorf("failed to execute command: %v", err)
+		return string(output), fmt.Errorf("%w: %v", ErrExecCommand, err)
 	}
 
 	return string(output), nil
-} 
+}

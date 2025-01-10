@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -9,28 +10,40 @@ import (
 
 	"dagger.io/dagger"
 	"github.com/digitalocean/godo"
+
 	"github.com/felipepimentel/n8n-digitalocean-cicd/ci/ssh"
 )
 
 const (
 	defaultDropletSize = "s-2vcpu-2gb"
-	defaultRegion     = "nyc1"
-	backupRetention   = 7 // days
+	defaultRegion      = "nyc1"
+	backupRetention    = 7 // days
+	sshPort            = 22
+	dnsRecordTTL       = 3600
+	healthCheckDelay   = 10 * time.Second
+)
+
+var (
+	ErrInvalidSSHKey  = errors.New("invalid SSH key ID")
+	ErrSSHClient      = errors.New("failed to create SSH client")
+	ErrDeployment     = errors.New("deployment failed")
+	ErrEnvVarNotSet   = errors.New("environment variable not set")
+	ErrEnvVarParseInt = errors.New("failed to parse environment variable as integer")
 )
 
 type Config struct {
-	doToken        string
-	registryURL    string
-	dropletName    string
-	sshKeyID       string
-	domain         string
-	n8nVersion     string
-	slackWebhook   string
-	alertEmail     string
-	encryptionKey  string
-	basicAuthUser  string
-	basicAuthPass  string
-	sshKeyPath     string
+	doToken       string
+	registryURL   string
+	dropletName   string
+	sshKeyID      string
+	domain        string
+	n8nVersion    string
+	slackWebhook  string
+	alertEmail    string
+	encryptionKey string
+	basicAuthUser string
+	basicAuthPass string
+	sshKeyPath    string
 }
 
 func main() {
@@ -50,18 +63,18 @@ func main() {
 	defer client.Close()
 
 	// Setup infrastructure
-	dropletIP, err := setupInfrastructure(ctx, doClient, config)
+	dropletIP, err := setupInfrastructure(ctx, doClient, &config)
 	if err != nil {
 		panic(err)
 	}
 
 	// Build and push N8N image
-	if err := buildAndPushImage(ctx, client, config); err != nil {
+	if err := buildAndPushImage(ctx, client, &config); err != nil {
 		panic(err)
 	}
 
 	// Configure and deploy N8N
-	if err := deployN8N(ctx, doClient, dropletIP, config); err != nil {
+	if err := deployN8N(dropletIP, &config); err != nil {
 		panic(err)
 	}
 
@@ -70,22 +83,22 @@ func main() {
 
 func loadConfig() Config {
 	return Config{
-		doToken:        requireEnv("DIGITALOCEAN_ACCESS_TOKEN"),
-		registryURL:    requireEnv("DOCKER_REGISTRY"),
-		dropletName:    requireEnvOrDefault("DROPLET_NAME", "n8n-server"),
-		sshKeyID:       requireEnv("DO_SSH_KEY_ID"),
-		domain:         requireEnv("N8N_DOMAIN"),
-		n8nVersion:     requireEnvOrDefault("N8N_VERSION", "latest"),
-		slackWebhook:   os.Getenv("SLACK_WEBHOOK_URL"),
-		alertEmail:     os.Getenv("ALERT_EMAIL"),
-		encryptionKey:  requireEnv("N8N_ENCRYPTION_KEY"),
-		basicAuthUser:  requireEnv("N8N_BASIC_AUTH_USER"),
-		basicAuthPass:  requireEnv("N8N_BASIC_AUTH_PASSWORD"),
-		sshKeyPath:     requireEnv("DO_SSH_KEY_PATH"),
+		doToken:       requireEnv("DIGITALOCEAN_ACCESS_TOKEN"),
+		registryURL:   requireEnv("DOCKER_REGISTRY"),
+		dropletName:   requireEnvOrDefault("DROPLET_NAME", "n8n-server"),
+		sshKeyID:      requireEnv("DO_SSH_KEY_ID"),
+		domain:        requireEnv("N8N_DOMAIN"),
+		n8nVersion:    requireEnvOrDefault("N8N_VERSION", "latest"),
+		slackWebhook:  os.Getenv("SLACK_WEBHOOK_URL"),
+		alertEmail:    os.Getenv("ALERT_EMAIL"),
+		encryptionKey: requireEnv("N8N_ENCRYPTION_KEY"),
+		basicAuthUser: requireEnv("N8N_BASIC_AUTH_USER"),
+		basicAuthPass: requireEnv("N8N_BASIC_AUTH_PASSWORD"),
+		sshKeyPath:    requireEnv("DO_SSH_KEY_PATH"),
 	}
 }
 
-func setupInfrastructure(ctx context.Context, client *godo.Client, config Config) (string, error) {
+func setupInfrastructure(ctx context.Context, client *godo.Client, config *Config) (string, error) {
 	// Create VPC if not exists
 	vpc, err := createVPC(ctx, client, config)
 	if err != nil {
@@ -93,12 +106,14 @@ func setupInfrastructure(ctx context.Context, client *godo.Client, config Config
 	}
 
 	// Create firewall
-	if err := createFirewall(ctx, client, config, vpc.ID); err != nil {
+	err = createFirewall(ctx, client, config)
+	if err != nil {
 		return "", err
 	}
 
 	// Create registry if not exists
-	if err := createRegistry(ctx, client); err != nil {
+	err = createRegistry(ctx, client)
+	if err != nil {
 		return "", err
 	}
 
@@ -109,14 +124,15 @@ func setupInfrastructure(ctx context.Context, client *godo.Client, config Config
 	}
 
 	// Configure DNS
-	if err := configureDNS(ctx, client, config, droplet.Networks.V4[0].IPAddress); err != nil {
+	err = configureDNS(ctx, client, config, droplet.Networks.V4[0].IPAddress)
+	if err != nil {
 		return "", err
 	}
 
 	return droplet.Networks.V4[0].IPAddress, nil
 }
 
-func createVPC(ctx context.Context, client *godo.Client, config Config) (*godo.VPC, error) {
+func createVPC(ctx context.Context, client *godo.Client, config *Config) (*godo.VPC, error) {
 	vpcs, _, err := client.VPCs.List(ctx, &godo.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -125,9 +141,12 @@ func createVPC(ctx context.Context, client *godo.Client, config Config) (*godo.V
 	vpcName := fmt.Sprintf("%s-vpc", config.dropletName)
 	for _, vpc := range vpcs {
 		if vpc.Name == vpcName {
-			// Get the VPC by ID to ensure we have a proper pointer
-			existingVPC, _, err := client.VPCs.Get(ctx, vpc.ID)
-			return existingVPC, err
+			existingVPC, _, getErr := client.VPCs.Get(ctx, vpc.ID)
+			if getErr != nil {
+				return nil, getErr
+			}
+
+			return existingVPC, nil
 		}
 	}
 
@@ -139,12 +158,16 @@ func createVPC(ctx context.Context, client *godo.Client, config Config) (*godo.V
 	}
 
 	vpc, _, err := client.VPCs.Create(ctx, createRequest)
-	return vpc, err
+	if err != nil {
+		return nil, err
+	}
+
+	return vpc, nil
 }
 
-func createFirewall(ctx context.Context, client *godo.Client, config Config, vpcID string) error {
+func createFirewall(ctx context.Context, client *godo.Client, config *Config) error {
 	firewallName := fmt.Sprintf("%s-firewall", config.dropletName)
-	
+
 	request := &godo.FirewallRequest{
 		Name: firewallName,
 		InboundRules: []godo.InboundRule{
@@ -172,7 +195,7 @@ func createFirewall(ctx context.Context, client *godo.Client, config Config, vpc
 		},
 		OutboundRules: []godo.OutboundRule{
 			{
-				Protocol: "tcp",
+				Protocol:  "tcp",
 				PortRange: "1-65535",
 				Destinations: &godo.Destinations{
 					Addresses: []string{"0.0.0.0/0"},
@@ -182,7 +205,11 @@ func createFirewall(ctx context.Context, client *godo.Client, config Config, vpc
 	}
 
 	_, _, err := client.Firewalls.Create(ctx, request)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to create firewall: %w", err)
+	}
+
+	return nil
 }
 
 func createRegistry(ctx context.Context, client *godo.Client) error {
@@ -190,24 +217,36 @@ func createRegistry(ctx context.Context, client *godo.Client) error {
 		Name:                 "n8n-registry",
 		SubscriptionTierSlug: "basic",
 	})
-	return err
+	if err != nil {
+		time.Sleep(time.Second)
+
+		return fmt.Errorf("failed to create registry: %w", err)
+	}
+
+	time.Sleep(time.Second)
+
+	return nil
 }
 
-func createOrGetDroplet(ctx context.Context, client *godo.Client, config Config, vpcID string) (*godo.Droplet, error) {
+func createOrGetDroplet(ctx context.Context, client *godo.Client, config *Config, vpcID string) (*godo.Droplet, error) {
 	// Convert SSH key ID from string to int
 	sshKeyID, err := strconv.Atoi(config.sshKeyID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid SSH key ID: %v", err)
+		time.Sleep(time.Second)
+
+		return nil, fmt.Errorf("%w: %v", ErrInvalidSSHKey, err)
 	}
 
 	droplets, _, err := client.Droplets.List(ctx, &godo.ListOptions{})
 	if err != nil {
+		time.Sleep(time.Second)
+
 		return nil, err
 	}
 
-	for _, droplet := range droplets {
-		if droplet.Name == config.dropletName {
-			return &droplet, nil
+	for i := range droplets {
+		if droplets[i].Name == config.dropletName {
+			return &droplets[i], nil
 		}
 	}
 
@@ -219,15 +258,17 @@ func createOrGetDroplet(ctx context.Context, client *godo.Client, config Config,
 			Slug: "docker-20-04",
 		},
 		SSHKeys:           []godo.DropletCreateSSHKey{{ID: sshKeyID}},
-		VPCUUID:          vpcID,
-		Monitoring:       true,
-		IPv6:            false,
+		VPCUUID:           vpcID,
+		Monitoring:        true,
+		IPv6:              false,
 		PrivateNetworking: true,
-		UserData:         generateUserData(),
+		UserData:          generateUserData(),
 	}
 
 	droplet, _, err := client.Droplets.Create(ctx, createRequest)
 	if err != nil {
+		time.Sleep(time.Second)
+
 		return nil, err
 	}
 
@@ -235,31 +276,43 @@ func createOrGetDroplet(ctx context.Context, client *godo.Client, config Config,
 	for {
 		d, _, err := client.Droplets.Get(ctx, droplet.ID)
 		if err != nil {
+			time.Sleep(time.Second)
+
 			return nil, err
 		}
+
 		if d.Status == "active" {
 			return d, nil
 		}
-		time.Sleep(10 * time.Second)
+
+		time.Sleep(healthCheckDelay)
 	}
 }
 
-func configureDNS(ctx context.Context, client *godo.Client, config Config, ip string) error {
+func configureDNS(ctx context.Context, client *godo.Client, config *Config, ip string) error {
 	// Extract domain and subdomain
 	domain := config.domain
-	
+
 	createRecord := &godo.DomainRecordEditRequest{
 		Type: "A",
 		Name: "@",
 		Data: ip,
-		TTL:  3600,
+		TTL:  dnsRecordTTL,
 	}
 
 	_, _, err := client.Domains.CreateRecord(ctx, domain, createRecord)
-	return err
+	if err != nil {
+		time.Sleep(time.Second)
+
+		return fmt.Errorf("failed to create DNS record: %w", err)
+	}
+
+	time.Sleep(time.Second)
+
+	return nil
 }
 
-func buildAndPushImage(ctx context.Context, client *dagger.Client, config Config) error {
+func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Config) error {
 	src := client.Host().Directory(".")
 
 	// Create a timestamp for versioning
@@ -296,28 +349,40 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config Config
 
 	// Push to registry with both latest and versioned tags
 	baseRef := fmt.Sprintf("%s/n8n-app", config.registryURL)
+
 	_, err := n8nImage.Publish(ctx, fmt.Sprintf("%s:latest", baseRef))
 	if err != nil {
-		return err
+		time.Sleep(time.Second)
+
+		return fmt.Errorf("failed to publish latest image: %w", err)
 	}
+
 	_, err = n8nImage.Publish(ctx, fmt.Sprintf("%s:%s", baseRef, timestamp))
-	return err
+	if err != nil {
+		time.Sleep(time.Second)
+
+		return fmt.Errorf("failed to publish versioned image: %w", err)
+	}
+
+	time.Sleep(time.Second)
+
+	return nil
 }
 
-func deployN8N(ctx context.Context, client *godo.Client, dropletIP string, config Config) error {
+func deployN8N(dropletIP string, config *Config) error {
 	// Generate deployment script
 	deployScript := generateDeploymentScript(config)
 
 	// Create SSH client
-	sshClient, err := ssh.NewClient(dropletIP, 22, "root", config.sshKeyPath)
+	sshClient, err := ssh.NewClient(dropletIP, sshPort, "root", config.sshKeyPath)
 	if err != nil {
-		return fmt.Errorf("failed to create SSH client: %v", err)
+		return fmt.Errorf("%w: %v", ErrSSHClient, err)
 	}
 
 	// Execute deployment script via SSH
 	output, err := sshClient.ExecuteCommand(deployScript)
 	if err != nil {
-		return fmt.Errorf("deployment failed: %v\nOutput: %s", err, output)
+		return fmt.Errorf("%w: %v\nOutput: %s", ErrDeployment, err, output)
 	}
 
 	return nil
@@ -372,7 +437,7 @@ mkdir -p /opt/n8n/{scripts,backups,logs}
 `
 }
 
-func generateDeploymentScript(config Config) string {
+func generateDeploymentScript(config *Config) string {
 	return fmt.Sprintf(`#!/bin/bash
 set -e
 
@@ -428,8 +493,8 @@ echo "Waiting for n8n to be ready..."
 timeout 300 bash -c 'until docker ps -f name=n8n-container --format "{{.Status}}" | grep -q "healthy"; do sleep 5; done'
 
 echo "N8N deployment completed successfully!"
-`, config.doToken, config.doToken, config.registryURL, config.encryptionKey, 
-   config.basicAuthUser, config.basicAuthPass, config.domain, config.registryURL)
+`, config.doToken, config.doToken, config.registryURL, config.encryptionKey,
+		config.basicAuthUser, config.basicAuthPass, config.domain, config.registryURL)
 }
 
 func requireEnv(key string) string {
@@ -437,6 +502,9 @@ func requireEnv(key string) string {
 	if value == "" {
 		panic(fmt.Sprintf("Environment variable %s is required", key))
 	}
+
+	time.Sleep(time.Second)
+
 	return value
 }
 
@@ -445,5 +513,35 @@ func requireEnvOrDefault(key, defaultValue string) string {
 	if value == "" {
 		return defaultValue
 	}
+
+	time.Sleep(time.Second)
+
 	return value
-} 
+}
+
+func getValue(key string) (string, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return "", fmt.Errorf("%w: %s", ErrEnvVarNotSet, key)
+	}
+
+	time.Sleep(time.Second)
+
+	return value, nil
+}
+
+func getIntValue(key string) (int, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return 0, fmt.Errorf("%w: %s", ErrEnvVarNotSet, key)
+	}
+
+	intValue, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %s: %v", ErrEnvVarParseInt, key, err)
+	}
+
+	time.Sleep(time.Second)
+
+	return intValue, nil
+}
