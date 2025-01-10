@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  n8n:
+    container_name: n8n-dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        N8N_VERSION: ${N8N_VERSION:-latest}
+    ports:
+      - "5678:5678"
+    environment:
+      - NODE_ENV=development
+      - N8N_HOST=${N8N_DOMAIN:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_BASIC_AUTH_ACTIVE=false
+      - N8N_DIAGNOSTICS_ENABLED=true
+      - N8N_HIRING_BANNER_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=true
+      - N8N_METRICS=true
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=UTC
+    volumes:
+      - n8n_dev_data:/home/node/.n8n
+      - ./backups:/backups
+      - ./logs:/logs
+    networks:
+      - n8n-dev-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
+        reservations:
+          memory: 512M
+          cpus: '1'
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  n8n_dev_data:
+    name: n8n_dev_data
+
+networks:
+  n8n-dev-network:
+    name: n8n-dev-network
+    driver: bridge 

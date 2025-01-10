@@ -1,0 +1,52 @@
+{
+    email {$CADDY_ACME_EMAIL}
+    acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+
+{$N8N_DOMAIN} {
+    reverse_proxy n8n-container:5678 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-For {remote}
+        header_up Host {host}
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+
+    tls {
+        protocols tls1.2 tls1.3
+        ciphers TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+    }
+
+    # Security headers
+    header {
+        # enable HSTS
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # disable clients from sniffing the media type
+        X-Content-Type-Options nosniff
+        # clickjacking protection
+        X-Frame-Options DENY
+        # keep referrer data off of HTTP connections
+        Referrer-Policy no-referrer-when-downgrade
+        # XSS protection
+        X-XSS-Protection "1; mode=block"
+        # CSP
+        Content-Security-Policy "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: *.n8n.io *.jsdelivr.net *.cloudflare.com; img-src 'self' data: https:; connect-src 'self' *.n8n.io wss: https:;"
+    }
+
+    # Gzip compression
+    encode gzip zstd
+
+    # File browser
+    handle /files/* {
+        root * /data/files
+        file_server browse
+    }
+
+    # Health check endpoint
+    handle /healthz {
+        respond "OK" 200
+    }
+} 
