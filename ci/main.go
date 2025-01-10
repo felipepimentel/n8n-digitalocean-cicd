@@ -82,19 +82,37 @@ func main() {
 }
 
 func loadConfig() Config {
+	// Required parameters
+	doToken := requireEnv("DIGITALOCEAN_ACCESS_TOKEN")
+	sshKeyID := requireEnv("DO_SSH_KEY_ID")
+	domain := requireEnv("N8N_DOMAIN")
+	encryptionKey := requireEnv("N8N_ENCRYPTION_KEY")
+
+	// Optional parameters with defaults
+	registryURL := requireEnvOrDefault("DOCKER_REGISTRY", "registry.digitalocean.com")
+	dropletName := requireEnvOrDefault("DROPLET_NAME", "n8n-server")
+	n8nVersion := requireEnvOrDefault("N8N_VERSION", "latest")
+	basicAuthUser := requireEnvOrDefault("N8N_BASIC_AUTH_USER", "admin")
+	basicAuthPass := requireEnvOrDefault("N8N_BASIC_AUTH_PASSWORD", encryptionKey) // Usa a encryption key como senha padrão
+	sshKeyPath := requireEnvOrDefault("DO_SSH_KEY_PATH", "~/.ssh/id_rsa")
+
+	// Optional monitoring parameters (sem valores padrão)
+	slackWebhook := os.Getenv("SLACK_WEBHOOK_URL")
+	alertEmail := os.Getenv("ALERT_EMAIL")
+
 	return Config{
-		doToken:       requireEnv("DIGITALOCEAN_ACCESS_TOKEN"),
-		registryURL:   requireEnv("DOCKER_REGISTRY"),
-		dropletName:   requireEnvOrDefault("DROPLET_NAME", "n8n-server"),
-		sshKeyID:      requireEnv("DO_SSH_KEY_ID"),
-		domain:        requireEnv("N8N_DOMAIN"),
-		n8nVersion:    requireEnvOrDefault("N8N_VERSION", "latest"),
-		slackWebhook:  os.Getenv("SLACK_WEBHOOK_URL"),
-		alertEmail:    os.Getenv("ALERT_EMAIL"),
-		encryptionKey: requireEnv("N8N_ENCRYPTION_KEY"),
-		basicAuthUser: requireEnv("N8N_BASIC_AUTH_USER"),
-		basicAuthPass: requireEnv("N8N_BASIC_AUTH_PASSWORD"),
-		sshKeyPath:    requireEnv("DO_SSH_KEY_PATH"),
+		doToken:       doToken,
+		registryURL:   registryURL,
+		dropletName:   dropletName,
+		sshKeyID:      sshKeyID,
+		domain:        domain,
+		n8nVersion:    n8nVersion,
+		slackWebhook:  slackWebhook,
+		alertEmail:    alertEmail,
+		encryptionKey: encryptionKey,
+		basicAuthUser: basicAuthUser,
+		basicAuthPass: basicAuthPass,
+		sshKeyPath:    sshKeyPath,
 	}
 }
 

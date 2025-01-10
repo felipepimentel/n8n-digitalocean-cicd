@@ -1,0 +1,55 @@
+remote_theme: pages-themes/cayman@v0.2.0
+plugins:
+  - jekyll-remote-theme
+  - jekyll-seo-tag
+
+title: n8n DigitalOcean CI/CD
+description: Automated deployment of n8n to DigitalOcean using GitHub Actions and Dagger
+show_downloads: true
+google_analytics:
+timezone: UTC
+
+# Navigation
+nav:
+  - title: Getting Started
+    url: /getting-started
+  - title: Architecture
+    url: /architecture
+  - title: Configuration
+    url: /configuration
+  - title: Security
+    url: /security
+  - title: Monitoring
+    url: /monitoring
+  - title: Troubleshooting
+    url: /troubleshooting
+  - title: Contributing
+    url: /contributing
+
+# Footer links
+footer_links:
+  - title: GitHub
+    url: https://github.com/yourusername/n8n-digitalocean-cicd
+  - title: Issues
+    url: https://github.com/yourusername/n8n-digitalocean-cicd/issues
+  - title: License
+    url: https://github.com/yourusername/n8n-digitalocean-cicd/blob/main/LICENSE
+
+# Markdown settings
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+  syntax_highlighter_opts:
+    css_class: highlight
+
+# Exclude files from processing
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor
+  - .git
+  - .github
+  - README.md
+  - LICENSE 

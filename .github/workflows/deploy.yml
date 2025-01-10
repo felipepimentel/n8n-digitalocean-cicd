@@ -7,16 +7,20 @@ on:
   workflow_dispatch:
 
 env:
+  # Required secrets
   DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-  DOCKER_REGISTRY: registry.digitalocean.com
-  DROPLET_NAME: n8n-server
   DO_SSH_KEY_ID: ${{ secrets.DO_SSH_KEY_ID }}
+  DO_SSH_PRIVATE_KEY: ${{ secrets.DO_SSH_PRIVATE_KEY }}
   N8N_DOMAIN: ${{ secrets.N8N_DOMAIN }}
-  N8N_VERSION: latest
   N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
-  N8N_BASIC_AUTH_USER: ${{ secrets.N8N_BASIC_AUTH_USER }}
-  N8N_BASIC_AUTH_PASSWORD: ${{ secrets.N8N_BASIC_AUTH_PASSWORD }}
-  DO_SSH_KEY_PATH: ${{ secrets.DO_SSH_KEY_PATH }}
+
+  # Optional with defaults
+  DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY || 'registry.digitalocean.com' }}
+  DROPLET_NAME: ${{ secrets.DROPLET_NAME || 'n8n-server' }}
+  N8N_VERSION: ${{ secrets.N8N_VERSION || 'latest' }}
+  N8N_BASIC_AUTH_USER: ${{ secrets.N8N_BASIC_AUTH_USER || 'admin' }}
+  N8N_BASIC_AUTH_PASSWORD: ${{ secrets.N8N_BASIC_AUTH_PASSWORD || secrets.N8N_ENCRYPTION_KEY }}
+  DO_SSH_KEY_PATH: ${{ secrets.DO_SSH_KEY_PATH || '~/.ssh/id_rsa' }}
 
 jobs:
   deploy:
