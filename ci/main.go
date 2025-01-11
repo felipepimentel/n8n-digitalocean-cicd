@@ -668,8 +668,8 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 	src := client.Host().Directory(".")
 	timestamp := time.Now().Format("20060102150405")
 
-	// Get scripts from host
-	scriptsDir := client.Host().Directory("ci/scripts")
+	// Get scripts from host - using relative path
+	scriptsDir := client.Host().Directory("scripts")
 
 	n8nImage := client.Container().
 		From(fmt.Sprintf("n8nio/n8n:%s", config.n8nVersion)).
