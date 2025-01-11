@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -483,7 +482,7 @@ func createRegistry(ctx context.Context, client *godo.Client) error {
 
 		// Registry doesn't exist, create it
 		registry, _, err = client.Registry.Create(ctx, &godo.RegistryCreateRequest{
-			Name:                 "n8n-app",
+			Name:                 "n8n-registry",
 			SubscriptionTierSlug: "starter",
 		})
 		if err != nil {
@@ -684,17 +683,16 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 	src := client.Host().Directory(".")
 	timestamp := time.Now().Format("20060102150405")
 
-	// Create Docker config.json content with the correct registry URL
-	dockerConfig := fmt.Sprintf(`{
-		"auths": {
-			"registry.digitalocean.com": {
-				"auth": "%s"
-			}
-		}
-	}`, base64.StdEncoding.EncodeToString([]byte(config.doToken+":"+config.doToken)))
+	// Get registry credentials
+	credentials, _, err := doClient.Registry.DockerCredentials(ctx, &godo.RegistryDockerCredentialsRequest{
+		ReadWrite: true,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get registry credentials: %w", err)
+	}
 
-	// Create a secret with Docker config
-	dockerConfigSecret := client.SetSecret("docker_config", dockerConfig)
+	// Create Docker config.json content with the registry credentials
+	dockerConfigSecret := client.SetSecret("docker_config", string(credentials.DockerConfigJSON))
 
 	n8nImage := client.Container().
 		From(fmt.Sprintf("n8nio/n8n:%s", config.n8nVersion)).
@@ -714,7 +712,7 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		WithLabel("org.opencontainers.image.version", config.n8nVersion).
 		WithDirectory("/app", src)
 
-	// Get registry name from the registry URL
+	// Get registry name
 	registry, _, err := doClient.Registry.Get(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get registry info: %w", err)
@@ -730,7 +728,7 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 	}
 
 	// Push versioned tag
-	_, err = n8nImage.Publish(ctx, fmt.Sprintf("%s:%s", baseRef, timestamp))
+	_, err = n8nImage.Publish(ctx, fmt.Sprintf("%s:%s", baseRef, config.n8nVersion))
 	if err != nil {
 		return fmt.Errorf("failed to publish versioned image: %w", err)
 	}
