@@ -86,8 +86,13 @@ func main() {
 	// Initialize DO client
 	doClient := godo.NewFromToken(config.doToken)
 
-	// Create SSH directory and key file
-	if err := setupSSHKey(config.sshKeyPath, os.Getenv("DO_SSH_PRIVATE_KEY")); err != nil {
+	// Create SSH directory and key file with proper permissions
+	sshPrivateKey := os.Getenv("DO_SSH_PRIVATE_KEY")
+	if sshPrivateKey == "" {
+		panic("DO_SSH_PRIVATE_KEY environment variable is required")
+	}
+
+	if err := setupSSHKey(config.sshKeyPath, sshPrivateKey); err != nil {
 		panic(fmt.Sprintf("failed to setup SSH key: %v", err))
 	}
 
@@ -118,58 +123,19 @@ func main() {
 }
 
 func loadConfig() Config {
-	// Required environment variables
-	requiredVars := []string{
-		"DIGITALOCEAN_ACCESS_TOKEN",
-		"DO_SSH_KEY_FINGERPRINT",
-		"N8N_DOMAIN",
-		"N8N_ENCRYPTION_KEY",
-	}
-
-	var missingVars []string
-
-	for _, varName := range requiredVars {
-		if os.Getenv(varName) == "" {
-			missingVars = append(missingVars, varName)
-		}
-	}
-
-	if len(missingVars) > 0 {
-		fmt.Println("\nError: Missing required environment variables:")
-
-		for _, varName := range missingVars {
-			fmt.Printf("- %s\n", varName)
-		}
-
-		fmt.Println("\nPlease set all required environment variables before running the deployment")
-		panic("\nMissing required environment variables")
-	}
-
-	// Optional parameters with defaults
-	registryURL := requireEnvOrDefault("DOCKER_REGISTRY", "registry.digitalocean.com")
-	dropletName := requireEnvOrDefault("DROPLET_NAME", "n8n-server")
-	n8nVersion := requireEnvOrDefault("N8N_VERSION", "latest")
-	basicAuthUser := requireEnvOrDefault("N8N_BASIC_AUTH_USER", "admin")
-	basicAuthPass := requireEnvOrDefault("N8N_BASIC_AUTH_PASSWORD", os.Getenv("N8N_ENCRYPTION_KEY"))
-	sshKeyPath := requireEnvOrDefault("DO_SSH_KEY_PATH", "~/.ssh/id_rsa")
-
-	// Optional monitoring parameters
-	slackWebhook := os.Getenv("SLACK_WEBHOOK_URL")
-	alertEmail := os.Getenv("ALERT_EMAIL")
-
 	return Config{
-		doToken:        os.Getenv("DIGITALOCEAN_ACCESS_TOKEN"),
-		registryURL:    registryURL,
-		dropletName:    dropletName,
-		sshFingerprint: os.Getenv("DO_SSH_KEY_FINGERPRINT"),
-		domain:         os.Getenv("N8N_DOMAIN"),
-		n8nVersion:     n8nVersion,
-		slackWebhook:   slackWebhook,
-		alertEmail:     alertEmail,
-		encryptionKey:  os.Getenv("N8N_ENCRYPTION_KEY"),
-		basicAuthUser:  basicAuthUser,
-		basicAuthPass:  basicAuthPass,
-		sshKeyPath:     sshKeyPath,
+		doToken:        requireEnv("DO_TOKEN"),
+		registryURL:    "registry.digitalocean.com",
+		dropletName:    requireEnvOrDefault("DROPLET_NAME", "n8n-production"),
+		sshFingerprint: requireEnv("DO_SSH_FINGERPRINT"),
+		domain:         requireEnv("DOMAIN"),
+		n8nVersion:     requireEnvOrDefault("N8N_VERSION", "latest"),
+		slackWebhook:   requireEnv("SLACK_WEBHOOK_URL"),
+		alertEmail:     requireEnv("ALERT_EMAIL"),
+		encryptionKey:  requireEnv("N8N_ENCRYPTION_KEY"),
+		basicAuthUser:  requireEnv("N8N_BASIC_AUTH_USER"),
+		basicAuthPass:  requireEnv("N8N_BASIC_AUTH_PASS"),
+		sshKeyPath:     requireEnvOrDefault("SSH_KEY_PATH", "~/.ssh/id_rsa"),
 	}
 }
 
