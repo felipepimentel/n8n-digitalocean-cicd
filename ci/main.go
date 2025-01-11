@@ -71,17 +71,6 @@ type Config struct {
 func main() {
 	ctx := context.Background()
 
-	// Check if scripts directory exists
-	if _, err := os.Stat("scripts"); os.IsNotExist(err) {
-		fmt.Println("\nError: 'scripts' directory not found")
-		fmt.Println("Please ensure the following directory structure exists:")
-		fmt.Println("ci/")
-		fmt.Println("└── scripts/")
-		fmt.Println("    ├── monitor.sh")
-		fmt.Println("    └── backup.sh")
-		panic("\nMissing required scripts directory")
-	}
-
 	// Load configuration
 	config := loadConfig()
 
@@ -702,12 +691,6 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		WithExec([]string{"/bin/sh", "-c", "apk upgrade"}).
 		WithExec([]string{"/bin/sh", "-c", "apk add curl ca-certificates jq"}).
 		WithExec([]string{"/bin/sh", "-c", "rm -rf /var/cache/apk/*"})
-
-	// Copy monitoring and backup scripts
-	n8nImage = n8nImage.
-		WithFile("/usr/local/bin/monitor.sh", client.Host().File("ci/scripts/monitor.sh")).
-		WithFile("/usr/local/bin/backup.sh", client.Host().File("ci/scripts/backup.sh")).
-		WithExec([]string{"chmod", "+x", "/usr/local/bin/monitor.sh", "/usr/local/bin/backup.sh"})
 
 	// Push to registry with both latest and versioned tags
 	baseRef := fmt.Sprintf("%s/n8n-app", config.registryURL)
