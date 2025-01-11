@@ -172,7 +172,7 @@ func createVPC(ctx context.Context, client *godo.Client, config *Config) (*godo.
 	createRequest := &godo.VPCCreateRequest{
 		Name:        vpcName,
 		RegionSlug:  defaultRegion,
-		IPRange:     "10.10.10.0/24",
+		IPRange:     "192.168.32.0/24",
 		Description: "VPC for n8n deployment",
 	}
 
