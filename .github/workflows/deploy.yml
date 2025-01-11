@@ -59,20 +59,11 @@ jobs:
           # Get registry name
           REGISTRY_NAME=$(doctl registry get --format Name --no-header)
           
-          # Configure Docker authentication directly with the main token
-          echo "${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" | docker login registry.digitalocean.com -u ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }} --password-stdin
-          
           # Create Docker config directory if it doesn't exist
           mkdir -p ~/.docker
           
-          # Create Docker config with the correct registry URL
-          echo '{
-            "auths": {
-              "registry.digitalocean.com": {
-                "auth": "'$(echo -n "${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}:${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" | base64)'"
-              }
-            }
-          }' > ~/.docker/config.json
+          # Configure Docker authentication for DigitalOcean registry
+          doctl registry login --expiry-seconds 600
           
           # Verify Docker authentication by trying to pull an image (if it exists)
           docker pull registry.digitalocean.com/$REGISTRY_NAME/n8n:latest || true
