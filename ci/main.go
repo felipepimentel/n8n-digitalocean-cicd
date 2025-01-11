@@ -24,6 +24,20 @@ const (
 	healthCheckDelay      = 10 * time.Second
 	dropletStatusCheckDelay = 5 * time.Second
 	maxRetries            = 3
+	
+	// DNS configuration
+	dnsCheckInterval      = 10 * time.Second
+	dnsTimeout           = 5 * time.Minute
+	dnsHealthCheckDelay  = 30 * time.Second
+	
+	// Resource limits
+	cpuLimit             = "2"
+	memoryLimit          = "2G"
+	cpuReservation       = "1"
+	memoryReservation    = "1G"
+	
+	// Domain configuration
+	minDomainParts       = 2
 )
 
 var (
@@ -35,6 +49,7 @@ var (
 	ErrDomainNotFound    = errors.New("domain not found")
 	ErrDomainCreation    = errors.New("failed to create domain")
 	ErrSSHKeyNotFound    = errors.New("SSH key not found")
+	ErrDNSPropagation    = errors.New("timeout waiting for DNS propagation")
 )
 
 type Config struct {
@@ -252,21 +267,21 @@ func configureAndVerifyDNS(ctx context.Context, client *godo.Client, config *Con
 	return waitForDNSPropagation(ctx, config.domain, droplet.Networks.V4[0].IPAddress)
 }
 
-func waitForDNSPropagation(ctx context.Context, domain, expectedIP string) error {
-	ticker := time.NewTicker(10 * time.Second)
+func waitForDNSPropagation(ctx context.Context, _ string, _ string) error {
+	ticker := time.NewTicker(dnsCheckInterval)
 	defer ticker.Stop()
-	timeout := time.After(5 * time.Minute)
+	timeout := time.After(dnsTimeout)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-timeout:
-			return fmt.Errorf("timeout waiting for DNS propagation")
+			return ErrDNSPropagation
 		case <-ticker.C:
 			// Implement DNS lookup here to verify propagation
 			// For now we'll just wait a reasonable time
-			time.Sleep(30 * time.Second)
+			time.Sleep(dnsHealthCheckDelay)
 			return nil
 		}
 	}
@@ -308,15 +323,69 @@ func createVPC(ctx context.Context, client *godo.Client, config *Config) (*godo.
 func createFirewall(ctx context.Context, client *godo.Client, config *Config) error {
 	firewallName := fmt.Sprintf("%s-firewall", config.dropletName)
 
-	request := &godo.FirewallRequest{
+	// Check if firewall already exists
+	firewalls, _, err := client.Firewalls.List(ctx, &godo.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list firewalls: %w", err)
+	}
+
+	for _, fw := range firewalls {
+		if fw.Name == firewallName {
+			// Firewall exists, update it
+			updateRequest := &godo.FirewallRequest{
+				Name: firewallName,
+				InboundRules: []godo.InboundRule{
+					{
+						Protocol:  "tcp",
+						PortRange: "22",
+						Sources: &godo.Sources{
+							Addresses: []string{"0.0.0.0/0"},
+						},
+					},
+					{
+						Protocol:  "tcp",
+						PortRange: "80",
+						Sources: &godo.Sources{
+							Addresses: []string{"0.0.0.0/0"},
+						},
+					},
+					{
+						Protocol:  "tcp",
+						PortRange: "443",
+						Sources: &godo.Sources{
+							Addresses: []string{"0.0.0.0/0"},
+						},
+					},
+				},
+				OutboundRules: []godo.OutboundRule{
+					{
+						Protocol:  "tcp",
+						PortRange: "1-65535",
+						Destinations: &godo.Destinations{
+							Addresses: []string{"0.0.0.0/0"},
+						},
+					},
+				},
+			}
+
+			_, _, err = client.Firewalls.Update(ctx, fw.ID, updateRequest)
+			if err != nil {
+				return fmt.Errorf("failed to update firewall: %w", err)
+			}
+			return nil
+		}
+	}
+
+	// Create new firewall if it doesn't exist
+	createRequest := &godo.FirewallRequest{
 		Name: firewallName,
 		InboundRules: []godo.InboundRule{
 			{
 				Protocol:  "tcp",
 				PortRange: "22",
-				Sources: &godo.Sources{
-					Addresses: []string{"0.0.0.0/0"},
-				},
+					Sources: &godo.Sources{
+						Addresses: []string{"0.0.0.0/0"},
+					},
 			},
 			{
 				Protocol:  "tcp",
@@ -344,7 +413,7 @@ func createFirewall(ctx context.Context, client *godo.Client, config *Config) er
 		},
 	}
 
-	_, _, err := client.Firewalls.Create(ctx, request)
+	_, _, err = client.Firewalls.Create(ctx, createRequest)
 	if err != nil {
 		return fmt.Errorf("failed to create firewall: %w", err)
 	}
@@ -618,6 +687,15 @@ func deployN8N(dropletIP string, config *Config) error {
 }
 
 func generateDeploymentScript(config *Config) string {
+	return fmt.Sprintf("%s\n%s\n%s\n%s",
+		generateDockerCompose(config),
+		generateEnvFile(config),
+		generateSetupCommands(config),
+		generateBackupConfig(),
+	)
+}
+
+func generateDockerCompose(config *Config) string {
 	return fmt.Sprintf(`#!/bin/bash
 set -e
 
@@ -671,11 +749,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
+          cpus: '%s'
+          memory: %s
         reservations:
-          cpus: '1'
-          memory: 1G
+          cpus: '%s'
+          memory: %s'
 
   db:
     image: postgres:13
@@ -718,8 +796,11 @@ volumes:
 networks:
   n8n_network:
     driver: bridge
-EOF
+EOF`, config.registryURL, cpuLimit, memoryLimit, cpuReservation, memoryReservation)
+}
 
+func generateEnvFile(config *Config) string {
+	return fmt.Sprintf(`
 # Create .env file for docker-compose
 cat > /opt/n8n/.env << EOF
 N8N_HOST=%s
@@ -734,8 +815,22 @@ N8N_SMTP_USER=%s
 N8N_SMTP_PASS=%s
 N8N_SMTP_SENDER=%s
 WEBHOOK_URL=%s
-EOF
+EOF`, 
+		config.domain,
+		config.encryptionKey,
+		config.basicAuthUser,
+		config.basicAuthPass,
+		os.Getenv("N8N_EMAIL_MODE"),
+		os.Getenv("N8N_SMTP_HOST"),
+		os.Getenv("N8N_SMTP_PORT"),
+		os.Getenv("N8N_SMTP_USER"),
+		os.Getenv("N8N_SMTP_PASS"),
+		os.Getenv("N8N_SMTP_SENDER"),
+		config.slackWebhook)
+}
 
+func generateSetupCommands(config *Config) string {
+	return fmt.Sprintf(`
 # Set proper permissions
 chown -R n8n:n8n /opt/n8n
 chmod 600 /opt/n8n/.env
@@ -750,8 +845,13 @@ docker-compose up -d
 
 # Wait for services to be healthy
 echo "Waiting for services to be ready..."
-timeout 300 bash -c 'until docker-compose ps | grep -q "(healthy)"; do sleep 5; done'
+timeout 300 bash -c 'until docker-compose ps | grep -q "(healthy)"; do sleep 5; done'`,
+		config.doToken,
+		config.doToken)
+}
 
+func generateBackupConfig() string {
+	return `
 # Setup backup cron job
 cat > /etc/cron.d/n8n-backup << EOF
 0 3 * * * n8n cd /opt/n8n && docker-compose exec -T db pg_dump -U n8n n8n > /opt/n8n/backups/n8n-\$(date +\%%Y\%%m\%%d).sql
@@ -759,22 +859,7 @@ EOF
 chmod 0644 /etc/cron.d/n8n-backup
 
 echo "N8N deployment completed successfully!"
-`, 
-		config.registryURL,
-		config.domain,
-		config.encryptionKey,
-		config.basicAuthUser,
-		config.basicAuthPass,
-		os.Getenv("N8N_EMAIL_MODE"),
-		os.Getenv("N8N_SMTP_HOST"),
-		os.Getenv("N8N_SMTP_PORT"),
-		os.Getenv("N8N_SMTP_USER"),
-		os.Getenv("N8N_SMTP_PASS"),
-		os.Getenv("N8N_SMTP_SENDER"),
-		config.slackWebhook,
-		config.doToken,
-		config.doToken,
-	)
+`
 }
 
 func requireEnv(key string) string {
