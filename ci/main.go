@@ -668,9 +668,6 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 	src := client.Host().Directory(".")
 	timestamp := time.Now().Format("20060102150405")
 
-	// Get scripts from host - using relative path
-	scriptsDir := client.Host().Directory("scripts")
-
 	n8nImage := client.Container().
 		From(fmt.Sprintf("n8nio/n8n:%s", config.n8nVersion)).
 		WithEnvVariable("NODE_ENV", "production").
@@ -686,12 +683,7 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		WithEnvVariable("N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", "true").
 		WithLabel("org.opencontainers.image.created", timestamp).
 		WithLabel("org.opencontainers.image.version", config.n8nVersion).
-		WithDirectory("/app", src).
-		WithDirectory("/usr/local/bin", scriptsDir)
-
-	// Add security patches and updates
-	n8nImage = n8nImage.
-		WithExec([]string{"chmod", "+x", "/usr/local/bin/monitor.sh", "/usr/local/bin/backup.sh"})
+		WithDirectory("/app", src)
 
 	// Push to registry with both latest and versioned tags
 	baseRef := fmt.Sprintf("%s/n8n-app", config.registryURL)
@@ -735,12 +727,10 @@ func deployN8N(dropletIP string, config *Config) error {
 }
 
 func generateDeploymentScript(config *Config) string {
-	return fmt.Sprintf("%s\n%s\n%s\n%s",
+	return fmt.Sprintf("%s\n%s\n%s",
 		generateDockerCompose(config),
 		generateEnvFile(config),
-		generateSetupCommands(config),
-		generateBackupConfig(),
-	)
+		generateSetupCommands(config))
 }
 
 func generateDockerCompose(config *Config) string {
@@ -937,18 +927,6 @@ echo "Waiting for services to be ready..."
 timeout 300 bash -c 'until docker-compose ps | grep -q "(healthy)"; do sleep 5; done'`,
 		config.doToken,
 		config.doToken)
-}
-
-func generateBackupConfig() string {
-	return `
-# Setup backup cron job
-cat > /etc/cron.d/n8n-backup << EOF
-0 3 * * * n8n cd /opt/n8n && docker-compose exec -T db pg_dump -U n8n n8n > /opt/n8n/backups/n8n-\$(date +\%%Y\%%m\%%d).sql
-EOF
-chmod 0644 /etc/cron.d/n8n-backup
-
-echo "N8N deployment completed successfully!"
-`
 }
 
 func requireEnv(key string) string {
