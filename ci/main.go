@@ -685,12 +685,12 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		WithLabel("org.opencontainers.image.version", config.n8nVersion).
 		WithDirectory("/app", src)
 
-	// Add security patches and updates using Alpine package manager
+	// Add security patches and updates using apt-get
 	n8nImage = n8nImage.
-		WithExec([]string{"/bin/sh", "-c", "apk update"}).
-		WithExec([]string{"/bin/sh", "-c", "apk upgrade"}).
-		WithExec([]string{"/bin/sh", "-c", "apk add curl ca-certificates jq"}).
-		WithExec([]string{"/bin/sh", "-c", "rm -rf /var/cache/apk/*"})
+		WithExec([]string{"/bin/bash", "-c", "apt-get update"}).
+		WithExec([]string{"/bin/bash", "-c", "apt-get upgrade -y"}).
+		WithExec([]string{"/bin/bash", "-c", "apt-get install -y curl ca-certificates jq"}).
+		WithExec([]string{"/bin/bash", "-c", "apt-get clean && rm -rf /var/lib/apt/lists/*"})
 
 	// Push to registry with both latest and versioned tags
 	baseRef := fmt.Sprintf("%s/n8n-app", config.registryURL)
