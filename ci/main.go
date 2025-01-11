@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -251,13 +252,24 @@ func ensureDomain(ctx context.Context, client *godo.Client, config *Config) erro
 	return nil
 }
 
+func sanitizeRecordName(name string) string {
+	// If name is empty or root domain, return @
+	if name == "" || name == "@" {
+		return "@"
+	}
+
+	// Replace invalid characters with -
+	invalidChars := regexp.MustCompile(`[^a-zA-Z0-9._-]`)
+	return invalidChars.ReplaceAllString(name, "-")
+}
+
 func configureAndVerifyDNS(ctx context.Context, client *godo.Client, config *Config, droplet *godo.Droplet) error {
 	recordName := "@"
 	rootDomain := config.domain
 	parts := strings.Split(config.domain, ".")
 
 	if len(parts) > minDomainParts {
-		recordName = parts[0]
+		recordName = sanitizeRecordName(parts[0])
 		rootDomain = strings.Join(parts[len(parts)-minDomainParts:], ".")
 	}
 
