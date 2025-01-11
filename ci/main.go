@@ -671,10 +671,20 @@ EOF
 }
 
 func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Config) error {
-	// First ensure registry exists
+	var err error
+
+	// First ensure registry exists and we're authenticated
 	doClient := godo.NewFromToken(config.doToken)
-	if err := createRegistry(ctx, doClient); err != nil {
+	if err = createRegistry(ctx, doClient); err != nil {
 		return fmt.Errorf("failed to ensure registry exists: %w", err)
+	}
+
+	// Authenticate with registry
+	_, _, err = doClient.Registry.DockerCredentials(ctx, &godo.RegistryDockerCredentialsRequest{
+		ReadWrite: true,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get registry credentials: %w", err)
 	}
 
 	src := client.Host().Directory(".")
@@ -701,7 +711,7 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 	baseRef := fmt.Sprintf("%s/n8n-app", config.registryURL)
 
 	// Push latest tag
-	_, err := n8nImage.Publish(ctx, fmt.Sprintf("%s:latest", baseRef))
+	_, err = n8nImage.Publish(ctx, fmt.Sprintf("%s:latest", baseRef))
 	if err != nil {
 		time.Sleep(time.Second)
 		return fmt.Errorf("failed to publish latest image: %w", err)
