@@ -130,11 +130,11 @@ func loadConfig() Config {
 		sshFingerprint: requireEnv("DO_SSH_KEY_FINGERPRINT"),
 		domain:         requireEnv("N8N_DOMAIN"),
 		n8nVersion:     requireEnvOrDefault("N8N_VERSION", "latest"),
-		slackWebhook:   requireEnv("SLACK_WEBHOOK_URL"),
-		alertEmail:     requireEnv("ALERT_EMAIL"),
+		slackWebhook:   os.Getenv("SLACK_WEBHOOK_URL"),
+		alertEmail:     os.Getenv("ALERT_EMAIL"),
 		encryptionKey:  requireEnv("N8N_ENCRYPTION_KEY"),
-		basicAuthUser:  requireEnv("N8N_BASIC_AUTH_USER"),
-		basicAuthPass:  requireEnv("N8N_BASIC_AUTH_PASS"),
+		basicAuthUser:  requireEnvOrDefault("N8N_BASIC_AUTH_USER", "admin"),
+		basicAuthPass:  requireEnvOrDefault("N8N_BASIC_AUTH_PASS", "n8n-admin"),
 		sshKeyPath:     requireEnvOrDefault("SSH_KEY_PATH", "~/.ssh/id_rsa"),
 	}
 }
@@ -904,6 +904,12 @@ func generateCaddyServiceConfig() string {
 }
 
 func generateEnvFile(config *Config) string {
+	// Optional email settings
+	emailMode := os.Getenv("N8N_EMAIL_MODE")
+	if emailMode == "" {
+		emailMode = "false"
+	}
+
 	return fmt.Sprintf(`
 # Create .env file for docker-compose
 cat > /opt/n8n/.env << EOF
@@ -913,24 +919,12 @@ DB_PASSWORD=$(openssl rand -hex 24)
 N8N_BASIC_AUTH_USER=%s
 N8N_BASIC_AUTH_PASSWORD=%s
 N8N_EMAIL_MODE=%s
-N8N_SMTP_HOST=%s
-N8N_SMTP_PORT=%s
-N8N_SMTP_USER=%s
-N8N_SMTP_PASS=%s
-N8N_SMTP_SENDER=%s
-WEBHOOK_URL=%s
 EOF`,
 		config.domain,
 		config.encryptionKey,
 		config.basicAuthUser,
 		config.basicAuthPass,
-		os.Getenv("N8N_EMAIL_MODE"),
-		os.Getenv("N8N_SMTP_HOST"),
-		os.Getenv("N8N_SMTP_PORT"),
-		os.Getenv("N8N_SMTP_USER"),
-		os.Getenv("N8N_SMTP_PASS"),
-		os.Getenv("N8N_SMTP_SENDER"),
-		config.slackWebhook)
+		emailMode)
 }
 
 func generateSetupCommands(config *Config) string {
