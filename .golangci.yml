@@ -1,0 +1,39 @@
+linters:
+  enable:
+    - gofmt
+    - godot
+    - gocritic
+    - funlen
+    - mnd
+    - wsl
+    - staticcheck
+    - unused
+
+linters-settings:
+  funlen:
+    lines: 100
+    statements: 50
+  
+  gocritic:
+    enabled-tags:
+      - performance
+      - style
+      - diagnostic
+
+  mnd:
+    checks:
+      - argument
+      - case
+      - condition
+      - operation
+      - return
+      - assign
+
+  wsl:
+    allow-cuddle-declarations: false
+    force-case-trailing-whitespace: 0
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0 

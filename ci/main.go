@@ -16,36 +16,40 @@ import (
 
 const (
 	defaultDropletSize      = "s-2vcpu-2gb"
-	defaultRegion          = "nyc1"
-	backupRetention        = 7 // days
-	sshPort               = 22
-	dnsRecordTTL          = 3600
-	healthCheckDelay      = 10 * time.Second
+	defaultRegion           = "nyc1"
+	backupRetention         = 7 // days.
+	sshPort                 = 22
+	dnsRecordTTL            = 3600
+	healthCheckDelay        = 10 * time.Second
 	dropletStatusCheckDelay = 5 * time.Second
-	maxRetries            = 3
-	
-	// DNS configuration
-	dnsCheckInterval      = 10 * time.Second
-	dnsTimeout           = 5 * time.Minute
-	dnsHealthCheckDelay  = 30 * time.Second
-	
-	// Resource limits
-	cpuLimit             = "2"
-	memoryLimit          = "2G"
-	cpuReservation       = "1"
-	memoryReservation    = "1G"
+	maxRetries              = 3
+
+	// DNS configuration.
+	dnsCheckInterval    = 10 * time.Second
+	dnsTimeout          = 5 * time.Minute
+	dnsHealthCheckDelay = 30 * time.Second
+
+	// Resource limits.
+	cpuLimit          = "2"
+	memoryLimit       = "2G"
+	cpuReservation    = "1"
+	memoryReservation = "1G"
+
+	// Magic numbers.
+	minDomainParts = 2
+	sshReadyDelay  = 30 * time.Second
 )
 
 var (
-	ErrInvalidSSHKey     = errors.New("invalid SSH key ID")
-	ErrSSHClient         = errors.New("failed to create SSH client")
-	ErrDeployment        = errors.New("deployment failed")
-	ErrEnvVarNotSet      = errors.New("environment variable not set")
-	ErrEnvVarParseInt    = errors.New("failed to parse environment variable as integer")
-	ErrDomainNotFound    = errors.New("domain not found")
-	ErrDomainCreation    = errors.New("failed to create domain")
-	ErrSSHKeyNotFound    = errors.New("SSH key not found")
-	ErrDNSPropagation    = errors.New("timeout waiting for DNS propagation")
+	ErrInvalidSSHKey  = errors.New("invalid SSH key ID")
+	ErrSSHClient      = errors.New("failed to create SSH client")
+	ErrDeployment     = errors.New("deployment failed")
+	ErrEnvVarNotSet   = errors.New("environment variable not set")
+	ErrEnvVarParseInt = errors.New("failed to parse environment variable as integer")
+	ErrDomainNotFound = errors.New("domain not found")
+	ErrDomainCreation = errors.New("failed to create domain")
+	ErrSSHKeyNotFound = errors.New("SSH key not found")
+	ErrDNSPropagation = errors.New("timeout waiting for DNS propagation")
 )
 
 type Config struct {
@@ -139,7 +143,7 @@ func setupInfrastructure(ctx context.Context, client *godo.Client, config *Confi
 	if err != nil {
 		return "", fmt.Errorf("failed to ensure SSH key: %w", err)
 	}
-	
+
 	// Create VPC if not exists
 	vpc, err := createVPC(ctx, client, config)
 	if err != nil {
@@ -211,39 +215,50 @@ func ensureSSHKey(ctx context.Context, client *godo.Client, config *Config) (int
 	return key.ID, nil
 }
 
-func ensureDomain(ctx context.Context, client *godo.Client, config *Config) error {
-	// Extract root domain from subdomain if necessary
-	rootDomain := config.domain
-	if parts := strings.Split(config.domain, "."); len(parts) > 2 {
-		rootDomain = strings.Join(parts[len(parts)-2:], ".")
+func getDomainParts(domain string) (rootDomain string, parts []string) {
+	parts = strings.Split(domain, ".")
+	rootDomain = domain
+
+	if len(parts) > minDomainParts {
+		rootDomain = strings.Join(parts[len(parts)-minDomainParts:], ".")
 	}
+
+	return rootDomain, parts
+}
+
+func ensureDomain(ctx context.Context, client *godo.Client, config *Config) error {
+	rootDomain, _ := getDomainParts(config.domain)
 
 	// Check if domain exists
 	_, resp, err := client.Domains.Get(ctx, rootDomain)
 	if err != nil {
 		if resp != nil && resp.StatusCode == 404 {
 			// Domain doesn't exist, create it
-			_, _, err = client.Domains.Create(ctx, &godo.DomainCreateRequest{
+			_, _, createErr := client.Domains.Create(ctx, &godo.DomainCreateRequest{
 				Name: rootDomain,
 			})
-			if err != nil {
-				return fmt.Errorf("%w: %s", ErrDomainCreation, err)
+
+			if createErr != nil {
+				return fmt.Errorf("%w: %s", ErrDomainCreation, createErr)
 			}
-		} else {
-			return fmt.Errorf("failed to check domain: %w", err)
+
+			return nil
 		}
+
+		return fmt.Errorf("failed to check domain: %w", err)
 	}
 
 	return nil
 }
 
 func configureAndVerifyDNS(ctx context.Context, client *godo.Client, config *Config, droplet *godo.Droplet) error {
-	// Extract subdomain if exists
 	recordName := "@"
 	rootDomain := config.domain
-	if parts := strings.Split(config.domain, "."); len(parts) > 2 {
+	parts := strings.Split(config.domain, ".")
+
+	if len(parts) > minDomainParts {
 		recordName = parts[0]
-		rootDomain = strings.Join(parts[len(parts)-2:], ".")
+		rootDomain = strings.Join(parts[len(parts)-minDomainParts:], ".")
 	}
 
 	// Create or update A record
@@ -266,6 +281,7 @@ func configureAndVerifyDNS(ctx context.Context, client *godo.Client, config *Con
 func waitForDNSPropagation(ctx context.Context) error {
 	ticker := time.NewTicker(dnsCheckInterval)
 	defer ticker.Stop()
+
 	timeout := time.After(dnsTimeout)
 
 	for {
@@ -290,6 +306,7 @@ func createVPC(ctx context.Context, client *godo.Client, config *Config) (*godo.
 	}
 
 	vpcName := fmt.Sprintf("%s-vpc", config.dropletName)
+
 	for i := range vpcs {
 		if vpcs[i].Name == vpcName {
 			existingVPC, _, getErr := client.VPCs.Get(ctx, vpcs[i].ID)
@@ -325,8 +342,8 @@ func createFirewall(ctx context.Context, client *godo.Client, config *Config) er
 		return fmt.Errorf("failed to list firewalls: %w", err)
 	}
 
-	for _, fw := range firewalls {
-		if fw.Name == firewallName {
+	for i := range firewalls {
+		if firewalls[i].Name == firewallName {
 			// Firewall exists, update it
 			updateRequest := &godo.FirewallRequest{
 				Name: firewallName,
@@ -364,10 +381,11 @@ func createFirewall(ctx context.Context, client *godo.Client, config *Config) er
 				},
 			}
 
-			_, _, err = client.Firewalls.Update(ctx, fw.ID, updateRequest)
+			_, _, err = client.Firewalls.Update(ctx, firewalls[i].ID, updateRequest)
 			if err != nil {
 				return fmt.Errorf("failed to update firewall: %w", err)
 			}
+
 			return nil
 		}
 	}
@@ -379,9 +397,9 @@ func createFirewall(ctx context.Context, client *godo.Client, config *Config) er
 			{
 				Protocol:  "tcp",
 				PortRange: "22",
-					Sources: &godo.Sources{
-						Addresses: []string{"0.0.0.0/0"},
-					},
+				Sources: &godo.Sources{
+					Addresses: []string{"0.0.0.0/0"},
+				},
 			},
 			{
 				Protocol:  "tcp",
@@ -424,7 +442,7 @@ func createRegistry(ctx context.Context, client *godo.Client) error {
 		if resp == nil || resp.StatusCode != 404 {
 			return fmt.Errorf("failed to check registry: %w", err)
 		}
-		
+
 		// Registry doesn't exist, create it
 		_, _, err = client.Registry.Create(ctx, &godo.RegistryCreateRequest{
 			Name:                 "n8n-registry",
@@ -465,12 +483,12 @@ func createOrGetDroplet(ctx context.Context, client *godo.Client, config *Config
 				ID: sshKeyID,
 			},
 		},
-		Monitoring:        true,
-		VPCUUID:          vpcID,
-		Tags:             []string{"n8n", "production"},
-		IPv6:             true,
-		Backups:          true,
-		UserData:         generateUserData(config), // Script to run on first boot
+		Monitoring: true,
+		VPCUUID:    vpcID,
+		Tags:       []string{"n8n", "production"},
+		IPv6:       true,
+		Backups:    true,
+		UserData:   generateUserData(config), // Script to run on first boot
 	}
 
 	droplet, _, err := client.Droplets.Create(ctx, createRequest)
@@ -487,8 +505,8 @@ func createOrGetDroplet(ctx context.Context, client *godo.Client, config *Config
 
 		if d.Status == "active" {
 			// Wait a bit more to ensure SSH is ready
-			time.Sleep(30 * time.Second)
-			
+			time.Sleep(sshReadyDelay)
+
 			// Configure non-root user
 			if err := setupNonRootUser(d.Networks.V4[0].IPAddress, config); err != nil {
 				return nil, fmt.Errorf("failed to setup non-root user: %w", err)
@@ -544,7 +562,7 @@ docker volume create n8n_data
 # Set proper permissions
 chown -R n8n:n8n /opt/n8n
 `
-	
+
 	if _, err := sshClient.ExecuteCommand(setupScript); err != nil {
 		return fmt.Errorf("failed to execute setup script: %w", err)
 	}
@@ -702,7 +720,12 @@ set -e
 
 # Create docker-compose.yml
 cat > /opt/n8n/docker-compose.yml << 'EOF'
-version: '3.8'
+%s
+EOF`, generateDockerComposeContent(config))
+}
+
+func generateDockerComposeContent(config *Config) string {
+	return fmt.Sprintf(`version: '3.8'
 
 services:
   n8n:
@@ -796,8 +819,7 @@ volumes:
 
 networks:
   n8n_network:
-    driver: bridge
-EOF`, config.registryURL, cpuLimit, memoryLimit, cpuReservation, memoryReservation)
+    driver: bridge`, config.registryURL, cpuLimit, memoryLimit, cpuReservation, memoryReservation)
 }
 
 func generateEnvFile(config *Config) string {
@@ -816,7 +838,7 @@ N8N_SMTP_USER=%s
 N8N_SMTP_PASS=%s
 N8N_SMTP_SENDER=%s
 WEBHOOK_URL=%s
-EOF`, 
+EOF`,
 		config.domain,
 		config.encryptionKey,
 		config.basicAuthUser,
