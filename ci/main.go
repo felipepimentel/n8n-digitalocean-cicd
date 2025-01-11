@@ -84,7 +84,7 @@ func main() {
 func loadConfig() Config {
 	// Required parameters
 	doToken := requireEnv("DIGITALOCEAN_ACCESS_TOKEN")
-	sshKeyID := requireEnv("DO_SSH_KEY_ID")
+	sshFingerprint := requireEnv("DO_SSH_KEY_FINGERPRINT")
 	domain := requireEnv("N8N_DOMAIN")
 	encryptionKey := requireEnv("N8N_ENCRYPTION_KEY")
 
@@ -93,7 +93,7 @@ func loadConfig() Config {
 	dropletName := requireEnvOrDefault("DROPLET_NAME", "n8n-server")
 	n8nVersion := requireEnvOrDefault("N8N_VERSION", "latest")
 	basicAuthUser := requireEnvOrDefault("N8N_BASIC_AUTH_USER", "admin")
-	basicAuthPass := requireEnvOrDefault("N8N_BASIC_AUTH_PASSWORD", encryptionKey) // Usa a encryption key como senha padrão
+	basicAuthPass := requireEnvOrDefault("N8N_BASIC_AUTH_PASSWORD", encryptionKey)
 	sshKeyPath := requireEnvOrDefault("DO_SSH_KEY_PATH", "~/.ssh/id_rsa")
 
 	// Optional monitoring parameters (sem valores padrão)
@@ -101,18 +101,18 @@ func loadConfig() Config {
 	alertEmail := os.Getenv("ALERT_EMAIL")
 
 	return Config{
-		doToken:       doToken,
-		registryURL:   registryURL,
-		dropletName:   dropletName,
-		sshFingerprint: sshKeyID,
-		domain:        domain,
-		n8nVersion:    n8nVersion,
-		slackWebhook:  slackWebhook,
-		alertEmail:    alertEmail,
-		encryptionKey: encryptionKey,
-		basicAuthUser: basicAuthUser,
-		basicAuthPass: basicAuthPass,
-		sshKeyPath:    sshKeyPath,
+		doToken:        doToken,
+		registryURL:    registryURL,
+		dropletName:    dropletName,
+		sshFingerprint: sshFingerprint,
+		domain:         domain,
+		n8nVersion:     n8nVersion,
+		slackWebhook:   slackWebhook,
+		alertEmail:     alertEmail,
+		encryptionKey:  encryptionKey,
+		basicAuthUser:  basicAuthUser,
+		basicAuthPass:  basicAuthPass,
+		sshKeyPath:     sshKeyPath,
 	}
 }
 
@@ -247,27 +247,19 @@ func createRegistry(ctx context.Context, client *godo.Client) error {
 }
 
 func createOrGetDroplet(ctx context.Context, client *godo.Client, config *Config, vpcID string) (*godo.Droplet, error) {
-	// Convert SSH key ID from string to int
-	sshKeyID, err := strconv.Atoi(config.sshFingerprint)
-	if err != nil {
-		time.Sleep(time.Second)
-
-		return nil, fmt.Errorf("%w: %v", ErrInvalidSSHKey, err)
-	}
-
+	// Check if droplet already exists
 	droplets, _, err := client.Droplets.List(ctx, &godo.ListOptions{})
 	if err != nil {
-		time.Sleep(time.Second)
-
-		return nil, err
+		return nil, fmt.Errorf("failed to list droplets: %w", err)
 	}
 
-	for i := range droplets {
-		if droplets[i].Name == config.dropletName {
-			return &droplets[i], nil
+	for _, d := range droplets {
+		if d.Name == config.dropletName {
+			return &d, nil
 		}
 	}
 
+	// Create new droplet
 	createRequest := &godo.DropletCreateRequest{
 		Name:   config.dropletName,
 		Region: defaultRegion,
@@ -275,35 +267,36 @@ func createOrGetDroplet(ctx context.Context, client *godo.Client, config *Config
 		Image: godo.DropletCreateImage{
 			Slug: "docker-20-04",
 		},
-		SSHKeys:           []godo.DropletCreateSSHKey{{ID: sshKeyID}},
+		SSHKeys: []godo.DropletCreateSSHKey{
+			{
+				Fingerprint: config.sshFingerprint,
+			},
+		},
+		Monitoring:         true,
 		VPCUUID:           vpcID,
-		Monitoring:        true,
-		IPv6:              false,
+		Tags:              []string{"n8n", "production"},
 		PrivateNetworking: true,
-		UserData:          generateUserData(),
+		IPv6:              true,
+		Backups:           true,
 	}
 
 	droplet, _, err := client.Droplets.Create(ctx, createRequest)
 	if err != nil {
-		time.Sleep(time.Second)
-
-		return nil, err
+		return nil, fmt.Errorf("failed to create droplet: %w", err)
 	}
 
 	// Wait for droplet to be ready
 	for {
 		d, _, err := client.Droplets.Get(ctx, droplet.ID)
 		if err != nil {
-			time.Sleep(time.Second)
-
-			return nil, err
+			return nil, fmt.Errorf("failed to get droplet status: %w", err)
 		}
 
 		if d.Status == "active" {
 			return d, nil
 		}
 
-		time.Sleep(healthCheckDelay)
+		time.Sleep(5 * time.Second)
 	}
 }
 
