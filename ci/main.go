@@ -738,10 +738,44 @@ EOF`, generateDockerComposeContent(config))
 }
 
 func generateDockerComposeContent(config *Config) string {
+	return generatePostgresCheck() + "\n" + generateServicesConfig(config)
+}
+
+func generatePostgresCheck() string {
+	return `
+# Check if PostgreSQL container exists and is running
+if docker ps -a --format '{{.Names}}' | grep -q "^n8n-db-1$"; then
+	echo "PostgreSQL container already exists, skipping creation..."
+	POSTGRES_EXISTS=true
+else
+	POSTGRES_EXISTS=false
+fi`
+}
+
+func generateServicesConfig(config *Config) string {
 	return fmt.Sprintf(`version: '3.8'
 
 services:
-  n8n:
+  n8n:%s
+  db:%s
+  caddy:%s
+
+volumes:
+  n8n_data:
+  db_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  n8n_network:
+    driver: bridge`,
+		generateN8NServiceConfig(config),
+		generateDBServiceConfig(),
+		generateCaddyServiceConfig())
+}
+
+func generateN8NServiceConfig(config *Config) string {
+	return fmt.Sprintf(`
     image: %s/n8n-app:latest
     restart: unless-stopped
     ports:
@@ -790,9 +824,11 @@ services:
           memory: %s
         reservations:
           cpus: '%s'
-          memory: %s'
+          memory: %s'`, config.registryURL, cpuLimit, memoryLimit, cpuReservation, memoryReservation)
+}
 
-  db:
+func generateDBServiceConfig() string {
+	return `
     image: postgres:13
     restart: unless-stopped
     environment:
@@ -808,8 +844,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    profiles:
+      - new-install`
+}
 
-  caddy:
+func generateCaddyServiceConfig() string {
+	return `
     image: caddy:2
     restart: unless-stopped
     ports:
@@ -822,17 +862,7 @@ services:
     networks:
       - n8n_network
     depends_on:
-      - n8n
-
-volumes:
-  n8n_data:
-  db_data:
-  caddy_data:
-  caddy_config:
-
-networks:
-  n8n_network:
-    driver: bridge`, config.registryURL, cpuLimit, memoryLimit, cpuReservation, memoryReservation)
+      - n8n`
 }
 
 func generateEnvFile(config *Config) string {
@@ -876,8 +906,15 @@ docker login registry.digitalocean.com -u %s -p %s
 
 # Pull and start services
 cd /opt/n8n
-docker-compose pull
-docker-compose up -d
+
+# Start services based on PostgreSQL existence
+if [ "$POSTGRES_EXISTS" = true ]; then
+	docker-compose pull n8n caddy
+	docker-compose up -d n8n caddy
+else
+	docker-compose pull
+	docker-compose --profile new-install up -d
+fi
 
 # Wait for services to be healthy
 echo "Waiting for services to be ready..."
