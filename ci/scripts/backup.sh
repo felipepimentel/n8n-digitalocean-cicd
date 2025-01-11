@@ -1,54 +1,105 @@
 #!/bin/bash
+set -e
 
 # Configuration
+CONTAINER_NAME="n8n-db-1"
 BACKUP_DIR="/opt/n8n/backups"
+LOG_FILE="/var/log/n8n-backup.log"
 WEBHOOK_URL="${WEBHOOK_URL}"
 ALERT_EMAIL="${ALERT_EMAIL}"
 RETENTION_DAYS=7
 
-# Create backup directory if it doesn't exist
-mkdir -p "$BACKUP_DIR"
+# Logging function
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "${LOG_FILE}"
+}
 
-# Function to send notifications
+# Send notification
 send_notification() {
     local message="$1"
+    local status="$2"
     
-    # Send Slack notification
-    if [ -n "$WEBHOOK_URL" ]; then
-        curl -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\"$message\"}" \
-            "$WEBHOOK_URL"
+    log "$message"
+    
+    # Prepare emoji based on status
+    local emoji="✅"
+    if [ "$status" = "error" ]; then
+        emoji="❌"
     fi
     
-    # Send email notification
-    if [ -n "$ALERT_EMAIL" ]; then
-        echo "$message" | mail -s "N8N Backup Alert" "$ALERT_EMAIL"
+    # Send Slack notification if webhook is configured
+    if [ -n "${WEBHOOK_URL}" ]; then
+        curl -s -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"${emoji} ${message}\"}" \
+            "${WEBHOOK_URL}"
+    fi
+    
+    # Send email if configured
+    if [ -n "${ALERT_EMAIL}" ]; then
+        echo "$message" | mail -s "N8N Backup $status" "${ALERT_EMAIL}"
     fi
 }
 
-# Backup timestamp
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+# Check disk space
+check_disk_space() {
+    local disk_usage
+    disk_usage=$(df -h "${BACKUP_DIR}" | awk 'NR==2 {print $5}' | cut -d'%' -f1)
+    
+    if [ "${disk_usage}" -gt 90 ]; then
+        send_notification "Low disk space (${disk_usage}%) on backup directory" "error"
+        return 1
+    fi
+    return 0
+}
 
-# Backup database
-echo "Starting database backup..."
-if docker-compose exec -T db pg_dump -U n8n n8n > "$BACKUP_DIR/n8n_db_$TIMESTAMP.sql"; then
-    echo "Database backup completed successfully"
-else
-    send_notification "⚠️ Database backup failed!"
-    exit 1
-fi
+# Clean old backups
+cleanup_old_backups() {
+    log "Cleaning up backups older than ${RETENTION_DAYS} days..."
+    find "${BACKUP_DIR}" -name "n8n-*.sql" -type f -mtime +${RETENTION_DAYS} -delete
+    find "${BACKUP_DIR}" -name "n8n-*.sql.gz" -type f -mtime +${RETENTION_DAYS} -delete
+}
 
-# Backup n8n files
-echo "Starting files backup..."
-if tar -czf "$BACKUP_DIR/n8n_files_$TIMESTAMP.tar.gz" -C /opt/n8n local_files; then
-    echo "Files backup completed successfully"
-else
-    send_notification "⚠️ Files backup failed!"
-    exit 1
-fi
+# Create backup
+create_backup() {
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_file="${BACKUP_DIR}/n8n-${timestamp}.sql"
+    
+    log "Creating backup: ${backup_file}"
+    
+    # Create backup directory if it doesn't exist
+    mkdir -p "${BACKUP_DIR}"
+    
+    # Create database backup
+    if docker exec "${CONTAINER_NAME}" pg_dump -U n8n n8n > "${backup_file}"; then
+        # Compress backup
+        gzip "${backup_file}"
+        send_notification "Backup created successfully: n8n-${timestamp}.sql.gz" "success"
+        return 0
+    else
+        send_notification "Backup failed" "error"
+        return 1
+    fi
+}
 
-# Clean up old backups
-find "$BACKUP_DIR" -type f -mtime +$RETENTION_DAYS -delete
+# Main backup process
+main() {
+    log "Starting backup process..."
+    
+    # Create log file if it doesn't exist
+    touch "${LOG_FILE}"
+    
+    # Check disk space
+    check_disk_space || exit 1
+    
+    # Create backup
+    create_backup || exit 1
+    
+    # Clean old backups
+    cleanup_old_backups
+    
+    log "Backup process completed"
+}
 
-# Send success notification
-send_notification "✅ Backup completed successfully!\nDatabase: n8n_db_$TIMESTAMP.sql\nFiles: n8n_files_$TIMESTAMP.tar.gz" 
+# Run main function
+main 
