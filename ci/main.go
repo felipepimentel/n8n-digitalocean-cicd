@@ -668,6 +668,9 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 	src := client.Host().Directory(".")
 	timestamp := time.Now().Format("20060102150405")
 
+	// Get scripts from host
+	scriptsDir := client.Host().Directory("ci/scripts")
+
 	n8nImage := client.Container().
 		From(fmt.Sprintf("n8nio/n8n:%s", config.n8nVersion)).
 		WithEnvVariable("NODE_ENV", "production").
@@ -683,11 +686,13 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		WithEnvVariable("N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", "true").
 		WithLabel("org.opencontainers.image.created", timestamp).
 		WithLabel("org.opencontainers.image.version", config.n8nVersion).
-		WithDirectory("/app", src)
+		WithDirectory("/app", src).
+		WithDirectory("/usr/local/bin", scriptsDir)
 
 	// Add security patches and updates
 	n8nImage = n8nImage.
-		WithExec([]string{"node", "-e", "console.log('Skipping system updates - using base image security')"})
+		WithExec([]string{"node", "-e", "console.log('Skipping system updates - using base image security')"}).
+		WithExec([]string{"chmod", "+x", "/usr/local/bin/monitor.sh", "/usr/local/bin/backup.sh"})
 
 	// Push to registry with both latest and versioned tags
 	baseRef := fmt.Sprintf("%s/n8n-app", config.registryURL)
