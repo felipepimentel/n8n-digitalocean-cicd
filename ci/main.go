@@ -481,7 +481,7 @@ func createRegistry(ctx context.Context, client *godo.Client) error {
 
 		// Registry doesn't exist, create it
 		registry, _, err = client.Registry.Create(ctx, &godo.RegistryCreateRequest{
-			Name:                 "n8n-registry",
+			Name:                 "n8n-app",
 			SubscriptionTierSlug: "starter",
 		})
 		if err != nil {
