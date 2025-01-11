@@ -15,12 +15,13 @@ import (
 )
 
 const (
-	defaultDropletSize = "s-2vcpu-2gb"
-	defaultRegion      = "nyc1"
-	backupRetention    = 7 // days
-	sshPort            = 22
-	dnsRecordTTL       = 3600
-	healthCheckDelay   = 10 * time.Second
+	defaultDropletSize      = "s-2vcpu-2gb"
+	defaultRegion           = "nyc1"
+	backupRetention         = 7 // days
+	sshPort                 = 22
+	dnsRecordTTL            = 3600
+	healthCheckDelay        = 10 * time.Second
+	dropletStatusCheckDelay = 5 * time.Second
 )
 
 var (
@@ -32,18 +33,18 @@ var (
 )
 
 type Config struct {
-	doToken       string
-	registryURL   string
-	dropletName   string
+	doToken        string
+	registryURL    string
+	dropletName    string
 	sshFingerprint string
-	domain        string
-	n8nVersion    string
-	slackWebhook  string
-	alertEmail    string
-	encryptionKey string
-	basicAuthUser string
-	basicAuthPass string
-	sshKeyPath    string
+	domain         string
+	n8nVersion     string
+	slackWebhook   string
+	alertEmail     string
+	encryptionKey  string
+	basicAuthUser  string
+	basicAuthPass  string
+	sshKeyPath     string
 }
 
 func main() {
@@ -157,9 +158,9 @@ func createVPC(ctx context.Context, client *godo.Client, config *Config) (*godo.
 	}
 
 	vpcName := fmt.Sprintf("%s-vpc", config.dropletName)
-	for _, vpc := range vpcs {
-		if vpc.Name == vpcName {
-			existingVPC, _, getErr := client.VPCs.Get(ctx, vpc.ID)
+	for i := range vpcs {
+		if vpcs[i].Name == vpcName {
+			existingVPC, _, getErr := client.VPCs.Get(ctx, vpcs[i].ID)
 			if getErr != nil {
 				return nil, getErr
 			}
@@ -253,9 +254,10 @@ func createOrGetDroplet(ctx context.Context, client *godo.Client, config *Config
 		return nil, fmt.Errorf("failed to list droplets: %w", err)
 	}
 
-	for _, d := range droplets {
-		if d.Name == config.dropletName {
-			return &d, nil
+	// Use index to avoid copying large structs
+	for i := range droplets {
+		if droplets[i].Name == config.dropletName {
+			return &droplets[i], nil
 		}
 	}
 
@@ -272,7 +274,7 @@ func createOrGetDroplet(ctx context.Context, client *godo.Client, config *Config
 				Fingerprint: config.sshFingerprint,
 			},
 		},
-		Monitoring:         true,
+		Monitoring:        true,
 		VPCUUID:           vpcID,
 		Tags:              []string{"n8n", "production"},
 		PrivateNetworking: true,
@@ -296,7 +298,7 @@ func createOrGetDroplet(ctx context.Context, client *godo.Client, config *Config
 			return d, nil
 		}
 
-		time.Sleep(5 * time.Second)
+		time.Sleep(dropletStatusCheckDelay)
 	}
 }
 
