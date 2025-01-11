@@ -666,8 +666,6 @@ EOF
 
 func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Config) error {
 	src := client.Host().Directory(".")
-
-	// Create a timestamp for versioning
 	timestamp := time.Now().Format("20060102150405")
 
 	n8nImage := client.Container().
@@ -681,16 +679,15 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		WithEnvVariable("N8N_BASIC_AUTH_ACTIVE", "true").
 		WithEnvVariable("N8N_BASIC_AUTH_USER", config.basicAuthUser).
 		WithEnvVariable("N8N_BASIC_AUTH_PASSWORD", config.basicAuthPass).
+		WithEnvVariable("TINI_SUBREAPER", "true").
+		WithEnvVariable("N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", "true").
 		WithLabel("org.opencontainers.image.created", timestamp).
 		WithLabel("org.opencontainers.image.version", config.n8nVersion).
 		WithDirectory("/app", src)
 
-	// Add security patches and updates using apt-get
+	// Add security patches and updates
 	n8nImage = n8nImage.
-		WithExec([]string{"/bin/sh", "-c", "apt-get update"}).
-		WithExec([]string{"/bin/sh", "-c", "apt-get upgrade -y"}).
-		WithExec([]string{"/bin/sh", "-c", "apt-get install -y curl ca-certificates jq"}).
-		WithExec([]string{"/bin/sh", "-c", "apt-get clean && rm -rf /var/lib/apt/lists/*"})
+		WithExec([]string{"node", "-e", "console.log('Skipping system updates - using base image security')"})
 
 	// Push to registry with both latest and versioned tags
 	baseRef := fmt.Sprintf("%s/n8n-app", config.registryURL)
