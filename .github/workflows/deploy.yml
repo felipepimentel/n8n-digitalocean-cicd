@@ -56,8 +56,8 @@ jobs:
 
       - name: Login to DigitalOcean Container Registry
         run: |
-          # Login to registry
-          doctl registry login --access-token ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          # Login to registry using the main token
+          echo "${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" | docker login registry.digitalocean.com -u ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }} --password-stdin
           
           # Create repository by pushing a dummy image if it doesn't exist
           if ! doctl registry repository list | grep -q "n8n-app"; then
@@ -69,12 +69,6 @@ jobs:
             docker push registry.digitalocean.com/n8n-app/n8n:init
             rm Dockerfile.init
           fi
-          
-          # Also authenticate Docker with the registry
-          doctl registry login
-          
-          # Verify Docker can access the registry
-          docker pull registry.digitalocean.com/n8n-app/n8n:latest || true
 
       - name: Create SSH key file
         run: |

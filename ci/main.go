@@ -495,18 +495,6 @@ func createRegistry(ctx context.Context, client *godo.Client) error {
 		return ErrRegistryEmpty
 	}
 
-	// Get Docker credentials for the registry
-	creds, _, err := client.Registry.DockerCredentials(ctx, &godo.RegistryDockerCredentialsRequest{
-		ReadWrite: true,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to get registry credentials: %w", err)
-	}
-
-	if creds == nil || len(creds.DockerConfigJSON) == 0 {
-		return ErrEmptyCredentials
-	}
-
 	return nil
 }
 
@@ -686,21 +674,14 @@ EOF
 func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Config) error {
 	var err error
 
-	// First ensure registry exists and we're authenticated
+	// First ensure registry exists
 	doClient := godo.NewFromToken(config.doToken)
 	if err = createRegistry(ctx, doClient); err != nil {
 		return fmt.Errorf("failed to ensure registry exists: %w", err)
 	}
 
-	// Authenticate with registry
-	_, _, err = doClient.Registry.DockerCredentials(ctx, &godo.RegistryDockerCredentialsRequest{
-		ReadWrite: true,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to get registry credentials: %w", err)
-	}
-
 	src := client.Host().Directory(".")
+
 	timestamp := time.Now().Format("20060102150405")
 
 	n8nImage := client.Container().
@@ -716,6 +697,7 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		WithEnvVariable("N8N_BASIC_AUTH_PASSWORD", config.basicAuthPass).
 		WithEnvVariable("TINI_SUBREAPER", "true").
 		WithEnvVariable("N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", "true").
+		WithEnvVariable("DOCKER_CONFIG", os.ExpandEnv("${HOME}/.docker")).
 		WithLabel("org.opencontainers.image.created", timestamp).
 		WithLabel("org.opencontainers.image.version", config.n8nVersion).
 		WithDirectory("/app", src)
@@ -736,8 +718,6 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		time.Sleep(time.Second)
 		return fmt.Errorf("failed to publish versioned image: %w", err)
 	}
-
-	time.Sleep(time.Second)
 
 	return nil
 }
