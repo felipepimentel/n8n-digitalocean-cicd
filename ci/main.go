@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -680,16 +681,20 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		return fmt.Errorf("failed to ensure registry exists: %w", err)
 	}
 
-	// Configure container with registry access
 	src := client.Host().Directory(".")
-
-	// Set up environment for registry access
-	registryAuth := client.Container().
-		From("alpine").
-		WithMountedFile("/root/.docker/config.json",
-			client.Host().Directory(os.ExpandEnv("${HOME}/.docker")).File("config.json"))
-
 	timestamp := time.Now().Format("20060102150405")
+
+	// Create Docker config.json content
+	dockerConfig := fmt.Sprintf(`{
+		"auths": {
+			"registry.digitalocean.com": {
+				"auth": "%s"
+			}
+		}
+	}`, base64.StdEncoding.EncodeToString([]byte(config.doToken+":"+config.doToken)))
+
+	// Create a secret with Docker config
+	dockerConfigSecret := client.SetSecret("docker_config", dockerConfig)
 
 	n8nImage := client.Container().
 		From(fmt.Sprintf("n8nio/n8n:%s", config.n8nVersion)).
@@ -704,7 +709,7 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		WithEnvVariable("N8N_BASIC_AUTH_PASSWORD", config.basicAuthPass).
 		WithEnvVariable("TINI_SUBREAPER", "true").
 		WithEnvVariable("N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", "true").
-		WithMountedDirectory("/root/.docker", registryAuth.Directory("/root/.docker")).
+		WithMountedSecret("/root/.docker/config.json", dockerConfigSecret).
 		WithLabel("org.opencontainers.image.created", timestamp).
 		WithLabel("org.opencontainers.image.version", config.n8nVersion).
 		WithDirectory("/app", src)
