@@ -124,7 +124,7 @@ func main() {
 
 func loadConfig() Config {
 	return Config{
-		doToken:        requireEnv("DO_TOKEN"),
+		doToken:        requireEnv("DIGITALOCEAN_ACCESS_TOKEN"),
 		registryURL:    "registry.digitalocean.com",
 		dropletName:    requireEnvOrDefault("DROPLET_NAME", "n8n-production"),
 		sshFingerprint: requireEnv("DO_SSH_FINGERPRINT"),
