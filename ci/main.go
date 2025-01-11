@@ -260,7 +260,9 @@ func sanitizeRecordName(name string) string {
 
 	// Replace invalid characters with -
 	invalidChars := regexp.MustCompile(`[^a-zA-Z0-9._-]`)
-	return invalidChars.ReplaceAllString(name, "-")
+	sanitized := invalidChars.ReplaceAllString(name, "-")
+
+	return sanitized
 }
 
 func configureAndVerifyDNS(ctx context.Context, client *godo.Client, config *Config, droplet *godo.Droplet) error {
