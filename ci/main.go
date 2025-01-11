@@ -42,16 +42,17 @@ const (
 )
 
 var (
-	ErrInvalidSSHKey  = errors.New("invalid SSH key ID")
-	ErrSSHClient      = errors.New("failed to create SSH client")
-	ErrDeployment     = errors.New("deployment failed")
-	ErrEnvVarNotSet   = errors.New("environment variable not set")
-	ErrEnvVarParseInt = errors.New("failed to parse environment variable as integer")
-	ErrDomainNotFound = errors.New("domain not found")
-	ErrDomainCreation = errors.New("failed to create domain")
-	ErrSSHKeyNotFound = errors.New("SSH key not found")
-	ErrDNSPropagation = errors.New("timeout waiting for DNS propagation")
-	ErrRegistryEmpty  = errors.New("registry creation failed: no registry name returned")
+	ErrInvalidSSHKey    = errors.New("invalid SSH key ID")
+	ErrSSHClient        = errors.New("failed to create SSH client")
+	ErrDeployment       = errors.New("deployment failed")
+	ErrEnvVarNotSet     = errors.New("environment variable not set")
+	ErrEnvVarParseInt   = errors.New("failed to parse environment variable as integer")
+	ErrDomainNotFound   = errors.New("domain not found")
+	ErrDomainCreation   = errors.New("failed to create domain")
+	ErrSSHKeyNotFound   = errors.New("SSH key not found")
+	ErrDNSPropagation   = errors.New("timeout waiting for DNS propagation")
+	ErrRegistryEmpty    = errors.New("registry creation failed: no registry name returned")
+	ErrEmptyCredentials = errors.New("empty registry credentials received")
 )
 
 type Config struct {
@@ -492,6 +493,18 @@ func createRegistry(ctx context.Context, client *godo.Client) error {
 	// Ensure we have a registry name
 	if registry == nil || registry.Name == "" {
 		return ErrRegistryEmpty
+	}
+
+	// Get Docker credentials for the registry
+	creds, _, err := client.Registry.DockerCredentials(ctx, &godo.RegistryDockerCredentialsRequest{
+		ReadWrite: true,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get registry credentials: %w", err)
+	}
+
+	if creds == nil || len(creds.DockerConfigJSON) == 0 {
+		return ErrEmptyCredentials
 	}
 
 	return nil
