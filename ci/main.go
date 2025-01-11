@@ -687,10 +687,10 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 
 	// Add security patches and updates using apt-get
 	n8nImage = n8nImage.
-		WithExec([]string{"/bin/bash", "-c", "apt-get update"}).
-		WithExec([]string{"/bin/bash", "-c", "apt-get upgrade -y"}).
-		WithExec([]string{"/bin/bash", "-c", "apt-get install -y curl ca-certificates jq"}).
-		WithExec([]string{"/bin/bash", "-c", "apt-get clean && rm -rf /var/lib/apt/lists/*"})
+		WithExec([]string{"/bin/sh", "-c", "apt-get update"}).
+		WithExec([]string{"/bin/sh", "-c", "apt-get upgrade -y"}).
+		WithExec([]string{"/bin/sh", "-c", "apt-get install -y curl ca-certificates jq"}).
+		WithExec([]string{"/bin/sh", "-c", "apt-get clean && rm -rf /var/lib/apt/lists/*"})
 
 	// Push to registry with both latest and versioned tags
 	baseRef := fmt.Sprintf("%s/n8n-app", config.registryURL)
