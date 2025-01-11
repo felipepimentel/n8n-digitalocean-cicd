@@ -664,34 +664,33 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		WithLabel("org.opencontainers.image.version", config.n8nVersion).
 		WithDirectory("/app", src)
 
-	// Add security patches and updates
+	// Add security patches and updates using Alpine package manager
 	n8nImage = n8nImage.
-		WithExec([]string{"apt-get", "update"}).
-		WithExec([]string{"apt-get", "upgrade", "-y"}).
-		WithExec([]string{"apt-get", "install", "-y", "curl", "ca-certificates", "jq", "fail2ban"}).
-		WithExec([]string{"apt-get", "clean"}).
-		WithExec([]string{"rm", "-rf", "/var/lib/apt/lists/*"})
+		WithExec([]string{"/bin/sh", "-c", "apk update"}).
+		WithExec([]string{"/bin/sh", "-c", "apk upgrade"}).
+		WithExec([]string{"/bin/sh", "-c", "apk add curl ca-certificates jq"}).
+		WithExec([]string{"/bin/sh", "-c", "rm -rf /var/cache/apk/*"})
 
 	// Copy monitoring and backup scripts
 	n8nImage = n8nImage.
-		WithFile("/usr/local/bin/monitor.sh", client.Host().File("scripts/monitor.sh")).
-		WithFile("/usr/local/bin/backup.sh", client.Host().File("scripts/backup.sh")).
+		WithFile("/usr/local/bin/monitor.sh", client.Host().File("ci/scripts/monitor.sh")).
+		WithFile("/usr/local/bin/backup.sh", client.Host().File("ci/scripts/backup.sh")).
 		WithExec([]string{"chmod", "+x", "/usr/local/bin/monitor.sh", "/usr/local/bin/backup.sh"})
 
 	// Push to registry with both latest and versioned tags
 	baseRef := fmt.Sprintf("%s/n8n-app", config.registryURL)
 
+	// Push latest tag
 	_, err := n8nImage.Publish(ctx, fmt.Sprintf("%s:latest", baseRef))
 	if err != nil {
 		time.Sleep(time.Second)
-
 		return fmt.Errorf("failed to publish latest image: %w", err)
 	}
 
+	// Push versioned tag
 	_, err = n8nImage.Publish(ctx, fmt.Sprintf("%s:%s", baseRef, timestamp))
 	if err != nil {
 		time.Sleep(time.Second)
-
 		return fmt.Errorf("failed to publish versioned image: %w", err)
 	}
 
