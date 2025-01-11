@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -40,6 +41,10 @@ const (
 	// Magic numbers.
 	minDomainParts = 2
 	sshReadyDelay  = 30 * time.Second
+
+	// File permissions.
+	sshDirPerm  = 0o700
+	sshFilePerm = 0o600
 )
 
 var (
@@ -80,6 +85,11 @@ func main() {
 
 	// Initialize DO client
 	doClient := godo.NewFromToken(config.doToken)
+
+	// Create SSH directory and key file
+	if err := setupSSHKey(config.sshKeyPath, os.Getenv("DO_SSH_PRIVATE_KEY")); err != nil {
+		panic(fmt.Sprintf("failed to setup SSH key: %v", err))
+	}
 
 	// Initialize Dagger client
 	client, err := dagger.Connect(ctx, dagger.WithLogOutput(os.Stdout))
@@ -1005,4 +1015,29 @@ func requireEnvOrDefault(key, defaultValue string) string {
 	time.Sleep(time.Second)
 
 	return value
+}
+
+func setupSSHKey(keyPath, privateKey string) error {
+	// Expand ~ to home directory if present
+	if strings.HasPrefix(keyPath, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+
+		keyPath = filepath.Join(home, keyPath[2:])
+	}
+
+	// Create .ssh directory if it doesn't exist
+	sshDir := filepath.Dir(keyPath)
+	if err := os.MkdirAll(sshDir, sshDirPerm); err != nil {
+		return fmt.Errorf("failed to create SSH directory: %w", err)
+	}
+
+	// Write private key to file
+	if err := os.WriteFile(keyPath, []byte(privateKey), sshFilePerm); err != nil {
+		return fmt.Errorf("failed to write SSH key file: %w", err)
+	}
+
+	return nil
 }
