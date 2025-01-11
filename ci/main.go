@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -35,9 +34,6 @@ const (
 	memoryLimit          = "2G"
 	cpuReservation       = "1"
 	memoryReservation    = "1G"
-	
-	// Domain configuration
-	minDomainParts       = 2
 )
 
 var (
@@ -264,10 +260,10 @@ func configureAndVerifyDNS(ctx context.Context, client *godo.Client, config *Con
 	}
 
 	// Wait for DNS propagation
-	return waitForDNSPropagation(ctx, config.domain, droplet.Networks.V4[0].IPAddress)
+	return waitForDNSPropagation(ctx)
 }
 
-func waitForDNSPropagation(ctx context.Context, _ string, _ string) error {
+func waitForDNSPropagation(ctx context.Context) error {
 	ticker := time.NewTicker(dnsCheckInterval)
 	defer ticker.Stop()
 	timeout := time.After(dnsTimeout)
@@ -422,17 +418,22 @@ func createFirewall(ctx context.Context, client *godo.Client, config *Config) er
 }
 
 func createRegistry(ctx context.Context, client *godo.Client) error {
-	_, _, err := client.Registry.Create(ctx, &godo.RegistryCreateRequest{
-		Name:                 "n8n-registry",
-		SubscriptionTierSlug: "basic",
-	})
+	// Check if registry already exists
+	_, resp, err := client.Registry.Get(ctx)
 	if err != nil {
-		time.Sleep(time.Second)
-
-		return fmt.Errorf("failed to create registry: %w", err)
+		if resp == nil || resp.StatusCode != 404 {
+			return fmt.Errorf("failed to check registry: %w", err)
+		}
+		
+		// Registry doesn't exist, create it
+		_, _, err = client.Registry.Create(ctx, &godo.RegistryCreateRequest{
+			Name:                 "n8n-registry",
+			SubscriptionTierSlug: "basic",
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create registry: %w", err)
+		}
 	}
-
-	time.Sleep(time.Second)
 
 	return nil
 }
@@ -551,7 +552,7 @@ chown -R n8n:n8n /opt/n8n
 	return nil
 }
 
-func generateUserData(config *Config) string {
+func generateUserData(_ *Config) string {
 	return `#!/bin/bash
 set -e
 
@@ -882,31 +883,4 @@ func requireEnvOrDefault(key, defaultValue string) string {
 	time.Sleep(time.Second)
 
 	return value
-}
-
-func getValue(key string) (string, error) {
-	value := os.Getenv(key)
-	if value == "" {
-		return "", fmt.Errorf("%w: %s", ErrEnvVarNotSet, key)
-	}
-
-	time.Sleep(time.Second)
-
-	return value, nil
-}
-
-func getIntValue(key string) (int, error) {
-	value := os.Getenv(key)
-	if value == "" {
-		return 0, fmt.Errorf("%w: %s", ErrEnvVarNotSet, key)
-	}
-
-	intValue, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("%w: %s: %v", ErrEnvVarParseInt, key, err)
-	}
-
-	time.Sleep(time.Second)
-
-	return intValue, nil
 }
