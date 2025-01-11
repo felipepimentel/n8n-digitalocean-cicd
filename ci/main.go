@@ -684,7 +684,7 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 	src := client.Host().Directory(".")
 	timestamp := time.Now().Format("20060102150405")
 
-	// Create Docker config.json content
+	// Create Docker config.json content with the correct registry URL
 	dockerConfig := fmt.Sprintf(`{
 		"auths": {
 			"registry.digitalocean.com": {
@@ -714,8 +714,14 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		WithLabel("org.opencontainers.image.version", config.n8nVersion).
 		WithDirectory("/app", src)
 
+	// Get registry name from the registry URL
+	registry, _, err := doClient.Registry.Get(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get registry info: %w", err)
+	}
+
 	// Push to registry with both latest and versioned tags
-	baseRef := fmt.Sprintf("%s/n8n-app", config.registryURL)
+	baseRef := fmt.Sprintf("%s/%s", config.registryURL, registry.Name)
 
 	// Push latest tag
 	_, err = n8nImage.Publish(ctx, fmt.Sprintf("%s:latest", baseRef))

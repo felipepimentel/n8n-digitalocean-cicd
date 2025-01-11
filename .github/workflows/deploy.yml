@@ -56,11 +56,26 @@ jobs:
 
       - name: Configure Docker for DigitalOcean Registry
         run: |
+          # Get registry name
+          REGISTRY_NAME=$(doctl registry get --format Name --no-header)
+          
           # Configure Docker authentication directly with the main token
           echo "${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" | docker login registry.digitalocean.com -u ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }} --password-stdin
           
-          # Verify Docker authentication
-          docker pull registry.digitalocean.com/n8n-app/n8n:latest || true
+          # Create Docker config directory if it doesn't exist
+          mkdir -p ~/.docker
+          
+          # Create Docker config with the correct registry URL
+          echo '{
+            "auths": {
+              "registry.digitalocean.com": {
+                "auth": "'$(echo -n "${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}:${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" | base64)'"
+              }
+            }
+          }' > ~/.docker/config.json
+          
+          # Verify Docker authentication by trying to pull an image (if it exists)
+          docker pull registry.digitalocean.com/$REGISTRY_NAME/n8n:latest || true
 
       - name: Create SSH key file
         run: |
