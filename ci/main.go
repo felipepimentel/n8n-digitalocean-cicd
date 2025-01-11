@@ -71,6 +71,17 @@ type Config struct {
 func main() {
 	ctx := context.Background()
 
+	// Check if scripts directory exists
+	if _, err := os.Stat("scripts"); os.IsNotExist(err) {
+		fmt.Println("\nError: 'scripts' directory not found")
+		fmt.Println("Please ensure the following directory structure exists:")
+		fmt.Println("ci/")
+		fmt.Println("└── scripts/")
+		fmt.Println("    ├── monitor.sh")
+		fmt.Println("    └── backup.sh")
+		panic("\nMissing required scripts directory")
+	}
+
 	// Load configuration
 	config := loadConfig()
 
@@ -104,34 +115,55 @@ func main() {
 }
 
 func loadConfig() Config {
-	// Required parameters
-	doToken := requireEnv("DIGITALOCEAN_ACCESS_TOKEN")
-	sshFingerprint := requireEnv("DO_SSH_KEY_FINGERPRINT")
-	domain := requireEnv("N8N_DOMAIN")
-	encryptionKey := requireEnv("N8N_ENCRYPTION_KEY")
+	// Required environment variables
+	requiredVars := []string{
+		"DIGITALOCEAN_ACCESS_TOKEN",
+		"DO_SSH_KEY_FINGERPRINT",
+		"N8N_DOMAIN",
+		"N8N_ENCRYPTION_KEY",
+	}
+
+	var missingVars []string
+
+	for _, varName := range requiredVars {
+		if os.Getenv(varName) == "" {
+			missingVars = append(missingVars, varName)
+		}
+	}
+
+	if len(missingVars) > 0 {
+		fmt.Println("\nError: Missing required environment variables:")
+
+		for _, varName := range missingVars {
+			fmt.Printf("- %s\n", varName)
+		}
+
+		fmt.Println("\nPlease set all required environment variables before running the deployment")
+		panic("\nMissing required environment variables")
+	}
 
 	// Optional parameters with defaults
 	registryURL := requireEnvOrDefault("DOCKER_REGISTRY", "registry.digitalocean.com")
 	dropletName := requireEnvOrDefault("DROPLET_NAME", "n8n-server")
 	n8nVersion := requireEnvOrDefault("N8N_VERSION", "latest")
 	basicAuthUser := requireEnvOrDefault("N8N_BASIC_AUTH_USER", "admin")
-	basicAuthPass := requireEnvOrDefault("N8N_BASIC_AUTH_PASSWORD", encryptionKey)
+	basicAuthPass := requireEnvOrDefault("N8N_BASIC_AUTH_PASSWORD", os.Getenv("N8N_ENCRYPTION_KEY"))
 	sshKeyPath := requireEnvOrDefault("DO_SSH_KEY_PATH", "~/.ssh/id_rsa")
 
-	// Optional monitoring parameters (sem valores padrão)
+	// Optional monitoring parameters
 	slackWebhook := os.Getenv("SLACK_WEBHOOK_URL")
 	alertEmail := os.Getenv("ALERT_EMAIL")
 
 	return Config{
-		doToken:        doToken,
+		doToken:        os.Getenv("DIGITALOCEAN_ACCESS_TOKEN"),
 		registryURL:    registryURL,
 		dropletName:    dropletName,
-		sshFingerprint: sshFingerprint,
-		domain:         domain,
+		sshFingerprint: os.Getenv("DO_SSH_KEY_FINGERPRINT"),
+		domain:         os.Getenv("N8N_DOMAIN"),
 		n8nVersion:     n8nVersion,
 		slackWebhook:   slackWebhook,
 		alertEmail:     alertEmail,
-		encryptionKey:  encryptionKey,
+		encryptionKey:  os.Getenv("N8N_ENCRYPTION_KEY"),
 		basicAuthUser:  basicAuthUser,
 		basicAuthPass:  basicAuthPass,
 		sshKeyPath:     sshKeyPath,
