@@ -51,6 +51,7 @@ var (
 	ErrDomainCreation = errors.New("failed to create domain")
 	ErrSSHKeyNotFound = errors.New("SSH key not found")
 	ErrDNSPropagation = errors.New("timeout waiting for DNS propagation")
+	ErrRegistryEmpty  = errors.New("registry creation failed: no registry name returned")
 )
 
 type Config struct {
@@ -472,20 +473,25 @@ func createFirewall(ctx context.Context, client *godo.Client, config *Config) er
 
 func createRegistry(ctx context.Context, client *godo.Client) error {
 	// Check if registry already exists
-	_, resp, err := client.Registry.Get(ctx)
+	registry, resp, err := client.Registry.Get(ctx)
 	if err != nil {
 		if resp == nil || resp.StatusCode != 404 {
 			return fmt.Errorf("failed to check registry: %w", err)
 		}
 
 		// Registry doesn't exist, create it
-		_, _, err = client.Registry.Create(ctx, &godo.RegistryCreateRequest{
+		registry, _, err = client.Registry.Create(ctx, &godo.RegistryCreateRequest{
 			Name:                 "n8n-registry",
-			SubscriptionTierSlug: "basic",
+			SubscriptionTierSlug: "starter",
 		})
 		if err != nil {
 			return fmt.Errorf("failed to create registry: %w", err)
 		}
+	}
+
+	// Ensure we have a registry name
+	if registry == nil || registry.Name == "" {
+		return ErrRegistryEmpty
 	}
 
 	return nil
@@ -665,6 +671,12 @@ EOF
 }
 
 func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Config) error {
+	// First ensure registry exists
+	doClient := godo.NewFromToken(config.doToken)
+	if err := createRegistry(ctx, doClient); err != nil {
+		return fmt.Errorf("failed to ensure registry exists: %w", err)
+	}
+
 	src := client.Host().Directory(".")
 	timestamp := time.Now().Format("20060102150405")
 
