@@ -24,6 +24,7 @@ const (
 	healthCheckDelay        = 10 * time.Second
 	dropletStatusCheckDelay = 5 * time.Second
 	maxRetries              = 3
+	registryRetryDelay      = 5 * time.Second
 
 	// DNS configuration.
 	dnsCheckInterval    = 10 * time.Second
@@ -53,6 +54,7 @@ var (
 	ErrDNSPropagation   = errors.New("timeout waiting for DNS propagation")
 	ErrRegistryEmpty    = errors.New("registry creation failed: no registry name returned")
 	ErrEmptyCredentials = errors.New("empty registry credentials received")
+	ErrRegistryNotReady = errors.New("registry not ready after maximum retries")
 )
 
 type Config struct {
@@ -482,7 +484,7 @@ func createRegistry(ctx context.Context, client *godo.Client) error {
 
 		// Registry doesn't exist, create it
 		registry, _, err = client.Registry.Create(ctx, &godo.RegistryCreateRequest{
-			Name:                 "n8n-registry",
+			Name:                 "n8n",
 			SubscriptionTierSlug: "starter",
 		})
 		if err != nil {
@@ -495,7 +497,17 @@ func createRegistry(ctx context.Context, client *godo.Client) error {
 		return ErrRegistryEmpty
 	}
 
-	return nil
+	// Ensure registry is ready
+	for i := 0; i < maxRetries; i++ {
+		registry, _, err = client.Registry.Get(ctx)
+		if err == nil && registry != nil && registry.Name != "" {
+			return nil
+		}
+
+		time.Sleep(registryRetryDelay)
+	}
+
+	return ErrRegistryNotReady
 }
 
 func createOrGetDroplet(ctx context.Context, client *godo.Client, config *Config, vpcID string, sshKeyID int) (*godo.Droplet, error) {
@@ -672,28 +684,48 @@ EOF
 }
 
 func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Config) error {
-	var err error
-
 	// First ensure registry exists
 	doClient := godo.NewFromToken(config.doToken)
-	if err = createRegistry(ctx, doClient); err != nil {
+	err := createRegistry(ctx, doClient)
+
+	if err != nil {
 		return fmt.Errorf("failed to ensure registry exists: %w", err)
 	}
 
-	src := client.Host().Directory(".")
-	timestamp := time.Now().Format("20060102150405")
-
-	// Get registry credentials
+	// Get registry credentials with read/write access
 	credentials, _, err := doClient.Registry.DockerCredentials(ctx, &godo.RegistryDockerCredentialsRequest{
 		ReadWrite: true,
 	})
+
 	if err != nil {
 		return fmt.Errorf("failed to get registry credentials: %w", err)
+	}
+
+	if credentials == nil || len(credentials.DockerConfigJSON) == 0 {
+		return ErrEmptyCredentials
 	}
 
 	// Create Docker config.json content with the registry credentials
 	dockerConfigSecret := client.SetSecret("docker_config", string(credentials.DockerConfigJSON))
 
+	// Get registry name
+	registry, _, err := doClient.Registry.Get(ctx)
+
+	if err != nil {
+		return fmt.Errorf("failed to get registry info: %w", err)
+	}
+
+	if registry == nil || registry.Name == "" {
+		return ErrRegistryEmpty
+	}
+
+	// Build base image URL
+	baseRef := fmt.Sprintf("%s/%s", config.registryURL, registry.Name)
+
+	// Create source directory
+	src := client.Host().Directory(".")
+
+	// Build the image
 	n8nImage := client.Container().
 		From(fmt.Sprintf("n8nio/n8n:%s", config.n8nVersion)).
 		WithEnvVariable("NODE_ENV", "production").
@@ -708,27 +740,22 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		WithEnvVariable("TINI_SUBREAPER", "true").
 		WithEnvVariable("N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", "true").
 		WithMountedSecret("/root/.docker/config.json", dockerConfigSecret).
-		WithLabel("org.opencontainers.image.created", timestamp).
+		WithLabel("org.opencontainers.image.created", time.Now().Format(time.RFC3339)).
 		WithLabel("org.opencontainers.image.version", config.n8nVersion).
 		WithDirectory("/app", src)
 
-	// Get registry name
-	registry, _, err := doClient.Registry.Get(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get registry info: %w", err)
-	}
-
-	// Push to registry with both latest and versioned tags
-	baseRef := fmt.Sprintf("%s/%s", config.registryURL, registry.Name)
-
 	// Push latest tag
-	_, err = n8nImage.Publish(ctx, fmt.Sprintf("%s:latest", baseRef))
+	latestRef := fmt.Sprintf("%s/n8n:latest", baseRef)
+	_, err = n8nImage.Publish(ctx, latestRef)
+
 	if err != nil {
 		return fmt.Errorf("failed to publish latest image: %w", err)
 	}
 
 	// Push versioned tag
-	_, err = n8nImage.Publish(ctx, fmt.Sprintf("%s:%s", baseRef, config.n8nVersion))
+	versionedRef := fmt.Sprintf("%s/n8n:%s", baseRef, config.n8nVersion)
+	_, err = n8nImage.Publish(ctx, versionedRef)
+
 	if err != nil {
 		return fmt.Errorf("failed to publish versioned image: %w", err)
 	}
