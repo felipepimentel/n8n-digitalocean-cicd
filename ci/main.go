@@ -680,7 +680,14 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		return fmt.Errorf("failed to ensure registry exists: %w", err)
 	}
 
+	// Configure container with registry access
 	src := client.Host().Directory(".")
+
+	// Set up environment for registry access
+	registryAuth := client.Container().
+		From("alpine").
+		WithMountedFile("/root/.docker/config.json",
+			client.Host().Directory(os.ExpandEnv("${HOME}/.docker")).File("config.json"))
 
 	timestamp := time.Now().Format("20060102150405")
 
@@ -697,7 +704,7 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 		WithEnvVariable("N8N_BASIC_AUTH_PASSWORD", config.basicAuthPass).
 		WithEnvVariable("TINI_SUBREAPER", "true").
 		WithEnvVariable("N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", "true").
-		WithEnvVariable("DOCKER_CONFIG", os.ExpandEnv("${HOME}/.docker")).
+		WithMountedDirectory("/root/.docker", registryAuth.Directory("/root/.docker")).
 		WithLabel("org.opencontainers.image.created", timestamp).
 		WithLabel("org.opencontainers.image.version", config.n8nVersion).
 		WithDirectory("/app", src)
@@ -708,14 +715,12 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 	// Push latest tag
 	_, err = n8nImage.Publish(ctx, fmt.Sprintf("%s:latest", baseRef))
 	if err != nil {
-		time.Sleep(time.Second)
 		return fmt.Errorf("failed to publish latest image: %w", err)
 	}
 
 	// Push versioned tag
 	_, err = n8nImage.Publish(ctx, fmt.Sprintf("%s:%s", baseRef, timestamp))
 	if err != nil {
-		time.Sleep(time.Second)
 		return fmt.Errorf("failed to publish versioned image: %w", err)
 	}
 
