@@ -691,7 +691,6 @@ func buildAndPushImage(ctx context.Context, client *dagger.Client, config *Confi
 
 	// Add security patches and updates
 	n8nImage = n8nImage.
-		WithExec([]string{"node", "-e", "console.log('Skipping system updates - using base image security')"}).
 		WithExec([]string{"chmod", "+x", "/usr/local/bin/monitor.sh", "/usr/local/bin/backup.sh"})
 
 	// Push to registry with both latest and versioned tags
