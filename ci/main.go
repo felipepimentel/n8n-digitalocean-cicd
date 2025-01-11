@@ -127,7 +127,7 @@ func loadConfig() Config {
 		doToken:        requireEnv("DIGITALOCEAN_ACCESS_TOKEN"),
 		registryURL:    "registry.digitalocean.com",
 		dropletName:    requireEnvOrDefault("DROPLET_NAME", "n8n-production"),
-		sshFingerprint: requireEnv("DO_SSH_FINGERPRINT"),
+		sshFingerprint: requireEnv("DO_SSH_KEY_FINGERPRINT"),
 		domain:         requireEnv("DOMAIN"),
 		n8nVersion:     requireEnvOrDefault("N8N_VERSION", "latest"),
 		slackWebhook:   requireEnv("SLACK_WEBHOOK_URL"),
