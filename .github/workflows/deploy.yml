@@ -49,6 +49,15 @@ jobs:
           [ -n "$N8N_ENCRYPTION_KEY" ] || { echo "N8N_ENCRYPTION_KEY is not set"; exit 1; }
           echo "All required environment variables are set"
 
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Login to DigitalOcean Container Registry
+        run: |
+          doctl registry login --access-token ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
       - name: Create SSH key file
         run: |
           set -x  # Enable debug mode to see what's happening
