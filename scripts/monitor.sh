@@ -1,104 +1,44 @@
 #!/bin/bash
-set -e
 
-# Configuration
-CONTAINER_NAME="n8n-container"
-SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-}"
-ALERT_EMAIL="${ALERT_EMAIL:-}"
-LOG_FILE="/opt/n8n/logs/monitor.log"
-MEMORY_THRESHOLD=90  # percentage
-CPU_THRESHOLD=80     # percentage
+# Health check URL
+HEALTH_URL="http://localhost:5678/healthz"
+WEBHOOK_URL="${WEBHOOK_URL}"
+ALERT_EMAIL="${ALERT_EMAIL}"
 
-# Logging function
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+# Function to send Slack notification
+send_slack_notification() {
+    if [ -n "$WEBHOOK_URL" ]; then
+        curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"$1\"}" \
+            "$WEBHOOK_URL"
+    fi
 }
 
-# Send notification
-send_notification() {
-    local message="$1"
-    local subject="N8N Alert: $message"
-    
-    log "Alert: $message"
-
-    # Send Slack notification if webhook is configured
-    if [ -n "$SLACK_WEBHOOK_URL" ]; then
-        curl -s -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\"$message\"}" \
-            "$SLACK_WEBHOOK_URL"
-    fi
-
-    # Send email if configured
+# Function to send email notification
+send_email_notification() {
     if [ -n "$ALERT_EMAIL" ]; then
-        echo "$message" | mail -s "$subject" "$ALERT_EMAIL"
+        echo "$1" | mail -s "N8N Alert" "$ALERT_EMAIL"
     fi
 }
 
-# Check if container is running
-check_container() {
-    if ! docker ps -f "name=$CONTAINER_NAME" --format '{{.Status}}' | grep -q "Up"; then
-        send_notification "Container $CONTAINER_NAME is not running!"
-        return 1
-    fi
-    return 0
-}
+# Check n8n health
+response=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL")
 
-# Check container health
-check_health() {
-    if ! docker ps -f "name=$CONTAINER_NAME" --format '{{.Status}}' | grep -q "healthy"; then
-        send_notification "Container $CONTAINER_NAME is unhealthy!"
-        return 1
-    fi
-    return 0
-}
-
-# Check memory usage
-check_memory() {
-    local memory_usage
-    memory_usage=$(docker stats "$CONTAINER_NAME" --no-stream --format "{{.MemPerc}}" | cut -d'.' -f1)
+if [ "$response" != "200" ]; then
+    message="⚠️ N8N health check failed! HTTP Status: $response"
+    send_slack_notification "$message"
+    send_email_notification "$message"
     
-    if [ "$memory_usage" -gt "$MEMORY_THRESHOLD" ]; then
-        send_notification "High memory usage: ${memory_usage}%"
-        return 1
+    # Try to restart n8n
+    docker-compose restart n8n
+else
+    # Check resource usage
+    cpu_usage=$(docker stats --no-stream --format "{{.CPUPerc}}" n8n)
+    memory_usage=$(docker stats --no-stream --format "{{.MemUsage}}" n8n)
+    
+    if [[ $cpu_usage > "80%" ]] || [[ $memory_usage =~ ^[0-9]+(\.[0-9]+)?GB$ && ${BASH_REMATCH[1]} > 1.8 ]]; then
+        message="⚠️ High resource usage detected!\nCPU: $cpu_usage\nMemory: $memory_usage"
+        send_slack_notification "$message"
+        send_email_notification "$message"
     fi
-    return 0
-}
-
-# Check CPU usage
-check_cpu() {
-    local cpu_usage
-    cpu_usage=$(docker stats "$CONTAINER_NAME" --no-stream --format "{{.CPUPerc}}" | cut -d'.' -f1)
-    
-    if [ "$cpu_usage" -gt "$CPU_THRESHOLD" ]; then
-        send_notification "High CPU usage: ${cpu_usage}%"
-        return 1
-    fi
-    return 0
-}
-
-# Check disk space
-check_disk() {
-    local disk_usage
-    disk_usage=$(df -h /opt/n8n | awk 'NR==2 {print $5}' | cut -d'%' -f1)
-    
-    if [ "$disk_usage" -gt 85 ]; then
-        send_notification "Low disk space: ${disk_usage}%"
-        return 1
-    fi
-    return 0
-}
-
-# Main monitoring loop
-main() {
-    log "Starting monitoring check..."
-    
-    check_container || true
-    check_health || true
-    check_memory || true
-    check_cpu || true
-    check_disk || true
-    
-    log "Monitoring check completed"
-}
-
-main 
+fi 
