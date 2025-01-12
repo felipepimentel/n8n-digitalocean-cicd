@@ -1022,39 +1022,25 @@ func setupSSHKey(keyPath, privateKey string) error {
 		cleanKey += "\n"
 	}
 
-	// Write private key to file
-	if err := os.WriteFile(absPath, []byte(cleanKey), sshFilePerm); err != nil {
+	// Create a temporary file for the original key
+	tmpKeyPath := absPath + ".tmp"
+	if err := os.WriteFile(tmpKeyPath, []byte(cleanKey), sshFilePerm); err != nil {
+		return fmt.Errorf("failed to write temporary key file: %w", err)
+	}
+	defer os.Remove(tmpKeyPath)
+
+	// Use openssl to convert the key to RSA format without passphrase
+	cmd := exec.Command("openssl", "rsa", "-in", tmpKeyPath)
+	output, err := cmd.Output()
+
+	if err != nil {
+		return fmt.Errorf("failed to convert key: %w\nOutput: %s", err, output)
+	}
+
+	// Write the converted key to the final location
+	err = os.WriteFile(absPath, output, sshFilePerm)
+	if err != nil {
 		return fmt.Errorf("failed to write SSH key file: %w", err)
-	}
-
-	// Create expect script to handle ssh-keygen interaction
-	expectScript := fmt.Sprintf(`#!/usr/bin/expect -f
-spawn ssh-keygen -p -f %s
-expect "Enter old passphrase:"
-send "\r"
-expect "Enter new passphrase (empty for no passphrase):"
-send "\r"
-expect "Enter same passphrase again:"
-send "\r"
-expect eof`, absPath)
-
-	// Write expect script to temporary file
-	expectPath := absPath + ".expect"
-	if err := os.WriteFile(expectPath, []byte(expectScript), sshFilePerm); err != nil {
-		return fmt.Errorf("failed to write expect script: %w", err)
-	}
-	defer os.Remove(expectPath)
-
-	// Install expect if not present
-	installCmd := exec.Command("bash", "-c", "which expect || sudo apt-get update && sudo apt-get install -y expect")
-	if err := installCmd.Run(); err != nil {
-		return fmt.Errorf("failed to install expect: %w", err)
-	}
-
-	// Run expect script
-	cmd := exec.Command("expect", expectPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to run expect script: %w\nOutput: %s", err, output)
 	}
 
 	// Start ssh-agent and add the key
@@ -1066,7 +1052,8 @@ ssh-add ` + absPath
 	cmd = exec.Command("bash", "-c", startAgentCmd)
 	cmd.Env = agentEnv
 
-	if output, err := cmd.CombinedOutput(); err != nil {
+	output, err = cmd.CombinedOutput()
+	if err != nil {
 		return fmt.Errorf("failed to add key to ssh-agent: %w\nOutput: %s", err, output)
 	}
 
