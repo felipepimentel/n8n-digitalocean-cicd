@@ -1012,19 +1012,28 @@ func setupSSHKey(keyPath, privateKey string) error {
 		return fmt.Errorf("failed to create SSH directory: %w", err)
 	}
 
-	// Ensure the key is in the correct format (remove any extra newlines)
-	cleanKey := strings.TrimSpace(privateKey)
-	if !strings.HasPrefix(cleanKey, "-----BEGIN") {
-		return ErrInvalidSSHKeyFormat
+	// Create a temporary file for the original key
+	tmpKeyPath := absPath + ".tmp"
+	if err := os.WriteFile(tmpKeyPath, []byte(privateKey), sshFilePerm); err != nil {
+		return fmt.Errorf("failed to write temporary key file: %w", err)
+	}
+	defer os.Remove(tmpKeyPath)
+
+	// Create a new key without passphrase using ssh-keygen
+	cmd := exec.Command("ssh-keygen", "-p", "-N", "", "-f", tmpKeyPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to remove passphrase: %w\nOutput: %s", err, output)
 	}
 
-	// Add newline at the end if missing
-	if !strings.HasSuffix(cleanKey, "\n") {
-		cleanKey += "\n"
+	// Read the key without passphrase
+	keyBytes, err := os.ReadFile(tmpKeyPath)
+	if err != nil {
+		return fmt.Errorf("failed to read key file: %w", err)
 	}
 
-	// Write the key directly to the file
-	if err := os.WriteFile(absPath, []byte(cleanKey), sshFilePerm); err != nil {
+	// Write the key without passphrase to the final location
+	err = os.WriteFile(absPath, keyBytes, sshFilePerm)
+	if err != nil {
 		return fmt.Errorf("failed to write SSH key file: %w", err)
 	}
 
