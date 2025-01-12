@@ -21,10 +21,4 @@ permissions:
 jobs:
   deploy:
     uses: felipepimentel/daggerverse/.github/workflows/reusable-n8n-ci-cd.yml@main
-    with:
-      repository: ${{ github.repository }}
-      dagger_version: "0.15.1"
-      app_name: "n8n"
-      workdir: "."
-      region: "nyc1"
     secrets: inherit
