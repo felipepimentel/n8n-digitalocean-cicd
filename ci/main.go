@@ -1022,22 +1022,21 @@ func setupSSHKey(keyPath, privateKey string) error {
 		cleanKey += "\n"
 	}
 
-	// Write private key to file
-	if err := os.WriteFile(absPath, []byte(cleanKey), sshFilePerm); err != nil {
-		return fmt.Errorf("failed to write SSH key file: %w", err)
+	// Write private key to a temporary file
+	tempKeyPath := absPath + ".tmp"
+	if err := os.WriteFile(tempKeyPath, []byte(cleanKey), sshFilePerm); err != nil {
+		return fmt.Errorf("failed to write temporary SSH key file: %w", err)
 	}
+	defer os.Remove(tempKeyPath)
 
-	// Convert the key to RSA format without passphrase
+	// Convert the key using OpenSSL
 	convertCmd := fmt.Sprintf(`
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
-cp %s ~/.ssh/id_rsa_encrypted
-chmod 600 ~/.ssh/id_rsa_encrypted
-ssh-keygen -p -N "" -f ~/.ssh/id_rsa_encrypted -m pem
-mv ~/.ssh/id_rsa_encrypted %s
+openssl rsa -in %s -out %s
 chmod 600 %s
 eval "$(ssh-agent -s)"
-ssh-add %s`, absPath, absPath, absPath, absPath)
+ssh-add %s`, tempKeyPath, absPath, absPath, absPath)
 
 	env := append(os.Environ(), "SSH_ASKPASS=/bin/false", "DISPLAY=")
 	cmd := exec.Command("bash", "-c", convertCmd)
