@@ -27,6 +27,7 @@ jobs:
     secrets:
       digitalocean_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
     with:
+      repository: ${{ github.repository }}
       dagger_version: "0.15.1"
       app_name: "n8n"
       workdir: "."
