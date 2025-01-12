@@ -31,6 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ssh_setup: ${{ steps.ssh_setup.outputs.success }}
+      env_vars: ${{ steps.env_vars.outputs.json }}
     steps:
       - name: Set up SSH
         id: ssh_setup
@@ -40,9 +41,20 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           
-          # Write the SSH key with proper line endings and base64 decode
-          echo "${{ secrets.DO_SSH_PRIVATE_KEY }}" | base64 -d | tr -d '\r' > ~/.ssh/id_rsa
+          # Decode and write the SSH key
+          echo "${{ secrets.DO_SSH_PRIVATE_KEY }}" | base64 -d > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
+          
+          # Verify the key format
+          if ! grep -q "BEGIN .* PRIVATE KEY" ~/.ssh/id_rsa; then
+            echo "Error: Invalid SSH key format - missing header"
+            exit 1
+          fi
+          
+          if ! grep -q "END .* PRIVATE KEY" ~/.ssh/id_rsa; then
+            echo "Error: Invalid SSH key format - missing footer"
+            exit 1
+          fi
           
           # Add known hosts
           ssh-keyscan -H digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
@@ -62,6 +74,20 @@ jobs:
           eval "$(ssh-agent -s)"
           ssh-add ~/.ssh/id_rsa
 
+      - name: Prepare environment variables
+        id: env_vars
+        run: |
+          echo "json=$(cat << 'EOF' | jq -c .
+          {
+            "N8N_BASIC_AUTH_ACTIVE": "true",
+            "N8N_BASIC_AUTH_USER": "admin",
+            "N8N_DOMAIN": "${{ secrets.N8N_DOMAIN }}",
+            "N8N_ENCRYPTION_KEY": "${{ secrets.N8N_ENCRYPTION_KEY }}",
+            "N8N_BASIC_AUTH_PASSWORD": "${{ secrets.N8N_BASIC_AUTH_PASSWORD }}"
+          }
+          EOF
+          )" >> $GITHUB_OUTPUT
+
   pipeline:
     needs: setup
     if: needs.setup.outputs.ssh_setup == 'true'
@@ -71,6 +97,6 @@ jobs:
       dagger_version: "0.15.1"
       app_name: "n8n"
       workdir: "."
-      env_vars: '{"N8N_BASIC_AUTH_ACTIVE": "true", "N8N_BASIC_AUTH_USER": "admin", "N8N_DOMAIN": "${{ secrets.N8N_DOMAIN }}", "N8N_ENCRYPTION_KEY": "${{ secrets.N8N_ENCRYPTION_KEY }}", "N8N_BASIC_AUTH_PASSWORD": "${{ secrets.N8N_BASIC_AUTH_PASSWORD }}"}'
+      env_vars: ${{ needs.setup.outputs.env_vars }}
     secrets:
       digitalocean_token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
