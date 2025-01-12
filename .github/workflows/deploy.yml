@@ -1,42 +1,139 @@
-name: Deploy n8n
+name: Deploy n8n (GitHub Actions)
 
 on:
-  workflow_call:
-    inputs:
-      repository:
-        required: true
-        type: string
-      dagger_version:
-        required: true
-        type: string
-      app_name:
-        required: true
-        type: string
-      workdir:
-        required: true
-        type: string
-      region:
-        required: true
-        type: string
-    secrets:
-      DIGITALOCEAN_ACCESS_TOKEN:
-        required: true
-      N8N_BASIC_AUTH_PASSWORD:
-        required: true
-      N8N_DOMAIN:
-        required: true
-      N8N_ENCRYPTION_KEY:
-        required: true
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  issues: write
+  pull-requests: write
+  packages: write
+  statuses: write
+  actions: read
 
 env:
+  ACTIONS_RUNNER_DEBUG: true
+  ACTIONS_STEP_DEBUG: true
   DOCKER_REGISTRY: registry.digitalocean.com
   DROPLET_NAME: n8n-server
   N8N_VERSION: latest
   N8N_BASIC_AUTH_USER: admin
+  # Senha simples para ambiente de teste (usuário: admin, senha: teste123)
+  N8N_TEST_PASSWORD: "teste123"
+  # Chave de criptografia padrão para ambiente de teste
+  N8N_TEST_ENCRYPTION_KEY: "12345678901234567890123456789012"
+  # Domínio padrão para ambiente de teste
+  N8N_TEST_DOMAIN: "n8n.pepper88.com"
 
 jobs:
-  deploy:
+  validate:
     runs-on: ubuntu-latest
+    outputs:
+      is_test_env: ${{ steps.check_env.outputs.is_test }}
+      auth_password: ${{ steps.check_env.outputs.password }}
+      encryption_key: ${{ steps.encryption_key.outputs.key }}
+      domain: ${{ steps.check_env.outputs.domain }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate or Get Encryption Key
+        id: encryption_key
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            # Em produção, usa a chave configurada ou gera uma nova
+            if [ -n "${{ secrets.N8N_ENCRYPTION_KEY }}" ]; then
+              echo "key=${{ secrets.N8N_ENCRYPTION_KEY }}" >> $GITHUB_OUTPUT
+              echo "🔐 Using configured encryption key"
+            else
+              # Gera uma nova chave hexadecimal de 32 caracteres
+              new_key=$(openssl rand -hex 16)
+              echo "key=$new_key" >> $GITHUB_OUTPUT
+              echo "🔐 Generated new encryption key: $new_key"
+              echo "⚠️ Important: Save this key in your repository secrets for future use!"
+            fi
+          else
+            # Em teste, usa a chave padrão
+            echo "key=${{ env.N8N_TEST_ENCRYPTION_KEY }}" >> $GITHUB_OUTPUT
+            echo "🔑 Using test encryption key"
+          fi
+
+      - name: Check environment
+        id: check_env
+        run: |
+          # Determina se é ambiente de teste baseado na branch
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "is_test=false" >> $GITHUB_OUTPUT
+            echo "password=${{ secrets.N8N_BASIC_AUTH_PASSWORD }}" >> $GITHUB_OUTPUT
+            echo "domain=${{ secrets.N8N_DOMAIN }}" >> $GITHUB_OUTPUT
+            echo "🔒 Production environment detected - using secure password"
+          else
+            echo "is_test=true" >> $GITHUB_OUTPUT
+            echo "password=${{ env.N8N_TEST_PASSWORD }}" >> $GITHUB_OUTPUT
+            echo "domain=${{ env.N8N_TEST_DOMAIN }}" >> $GITHUB_OUTPUT
+            echo "⚠️ Test environment detected - using simple password (teste123)"
+          fi
+
+      - name: Validate DigitalOcean Token
+        run: |
+          echo "🔍 Testing DigitalOcean API Token..."
+          response=$(curl -s -X GET \
+            -H "Authorization: Bearer ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" \
+            "https://api.digitalocean.com/v2/account")
+          
+          if echo "$response" | jq -e '.account' >/dev/null; then
+            echo "✅ DigitalOcean API Token is valid"
+          else
+            echo "❌ Error: Invalid DigitalOcean API Token"
+            echo "Response: $response"
+            exit 1
+          fi
+
+      - name: Validate Domain
+        run: |
+          echo "🔍 Testing domain configuration..."
+          domain="${{ steps.check_env.outputs.domain }}"
+          
+          if [[ ! "$domain" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
+            echo "❌ Error: Invalid domain format: $domain"
+            echo "Domain should be a valid hostname (e.g., n8n.example.com)"
+            exit 1
+          fi
+          
+          echo "✅ Domain format is valid: $domain"
+          
+          # Em produção, verifica se o domínio resolve
+          if [[ "${{ steps.check_env.outputs.is_test }}" != "true" ]] && ! host "$domain" >/dev/null 2>&1; then
+            echo "⚠️ Warning: Domain $domain is not resolvable yet"
+            echo "Make sure to configure DNS after deployment"
+          fi
+
+      - name: Summary
+        run: |
+          echo "🎉 All validations passed!"
+          echo "Environment: ${{ steps.check_env.outputs.is_test == 'true' && 'TEST' || 'PRODUCTION' }}"
+          if [ "${{ steps.check_env.outputs.is_test }}" == "true" ]; then
+            echo "⚠️ Using test credentials:"
+            echo "  - Username: admin"
+            echo "  - Password: teste123"
+            echo "  - Domain: ${{ env.N8N_TEST_DOMAIN }}"
+            echo "  - Encryption Key: ${{ env.N8N_TEST_ENCRYPTION_KEY }}"
+          fi
+
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    env:
+      N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
+      N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
+      N8N_BASIC_AUTH_PASSWORD: ${{ needs.validate.outputs.auth_password }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -50,15 +147,6 @@ jobs:
         run: |
           cd ci
           go mod download
-
-      - name: Verify environment variables
-        run: |
-          echo "Checking required environment variables..."
-          [ -n "${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" ] || { echo "DIGITALOCEAN_ACCESS_TOKEN is not set"; exit 1; }
-          [ -n "${{ secrets.N8N_DOMAIN }}" ] || { echo "N8N_DOMAIN is not set"; exit 1; }
-          [ -n "${{ secrets.N8N_ENCRYPTION_KEY }}" ] || { echo "N8N_ENCRYPTION_KEY is not set"; exit 1; }
-          [ -n "${{ secrets.N8N_BASIC_AUTH_PASSWORD }}" ] || { echo "N8N_BASIC_AUTH_PASSWORD is not set"; exit 1; }
-          echo "All required environment variables are set"
 
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
@@ -86,16 +174,9 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           
-          # Generate a new ED25519 SSH key pair
-          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "github-actions-n8n"
-          
-          # Get the public key and fingerprint
-          SSH_PUBLIC_KEY=$(cat ~/.ssh/id_ed25519.pub)
-          SSH_KEY_FINGERPRINT=$(ssh-keygen -lf ~/.ssh/id_ed25519.pub | awk '{print $2}')
-          
-          # Add the key to DigitalOcean
-          echo "Adding SSH key to DigitalOcean..."
-          doctl compute ssh-key import github-actions-n8n --public-key-file ~/.ssh/id_ed25519.pub
+          # Write the SSH private key
+          echo "${{ secrets.DO_SSH_PRIVATE_KEY }}" | base64 -d > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
           
           # Add known hosts
           ssh-keyscan -t rsa,ed25519 digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
@@ -103,17 +184,19 @@ jobs:
           
           # Set environment variables for ssh-agent
           eval $(ssh-agent -s)
-          ssh-add ~/.ssh/id_ed25519
+          ssh-add ~/.ssh/id_rsa
           
-          # Output the fingerprint for use in other steps
-          echo "fingerprint=$SSH_KEY_FINGERPRINT" >> $GITHUB_OUTPUT
+          # Test SSH key
+          echo "Testing SSH key format:"
+          ssh-keygen -l -f ~/.ssh/id_rsa || {
+            echo "Error: Invalid SSH key"
+            exit 1
+          }
 
       - name: Deploy n8n
         env:
-          DO_SSH_KEY_FINGERPRINT: ${{ steps.ssh_setup.outputs.fingerprint }}
-          N8N_DOMAIN: ${{ secrets.N8N_DOMAIN }}
-          N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
-          N8N_BASIC_AUTH_PASSWORD: ${{ secrets.N8N_BASIC_AUTH_PASSWORD }}
+          DO_SSH_KEY_FINGERPRINT: ${{ secrets.DO_SSH_KEY_FINGERPRINT }}
+          DO_SSH_KEY_ID: ${{ secrets.DO_SSH_KEY_ID }}
         run: |
           cd ci
           go run main.go
@@ -121,11 +204,4 @@ jobs:
       - name: Cleanup SSH key
         if: always()
         run: |
-          # Remove the SSH key from DigitalOcean
-          KEY_ID=$(doctl compute ssh-key list --format ID,Name --no-header | grep github-actions-n8n | awk '{print $1}')
-          if [ ! -z "$KEY_ID" ]; then
-            doctl compute ssh-key delete $KEY_ID --force
-          fi
-          
-          # Remove local SSH files
-          rm -f ~/.ssh/id_ed25519*
+          rm -f ~/.ssh/id_rsa*

@@ -1,4 +1,4 @@
-name: Release
+name: Release (Dagger)
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
     branches: ["main"]
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -20,9 +21,6 @@ permissions:
 env:
   ACTIONS_RUNNER_DEBUG: true
   ACTIONS_STEP_DEBUG: true
-  DOCKER_REGISTRY: registry.digitalocean.com
-  DROPLET_NAME: n8n-server
-  N8N_VERSION: latest
   N8N_BASIC_AUTH_USER: admin
   # Senha simples para ambiente de teste (usuário: admin, senha: teste123)
   N8N_TEST_PASSWORD: "teste123"
@@ -79,60 +77,6 @@ jobs:
             echo "domain=${{ env.N8N_TEST_DOMAIN }}" >> $GITHUB_OUTPUT
             echo "⚠️ Test environment detected - using simple password (teste123)"
           fi
-
-      - name: Validate DigitalOcean Token
-        run: |
-          echo "🔍 Testing DigitalOcean API Token..."
-          response=$(curl -s -X GET \
-            -H "Authorization: Bearer ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" \
-            "https://api.digitalocean.com/v2/account")
-          
-          if echo "$response" | jq -e '.account' >/dev/null; then
-            echo "✅ DigitalOcean API Token is valid"
-          else
-            echo "❌ Error: Invalid DigitalOcean API Token"
-            echo "Response: $response"
-            exit 1
-          fi
-
-      - name: Validate Domain
-        run: |
-          echo "🔍 Testing domain configuration..."
-          domain="${{ steps.check_env.outputs.domain }}"
-          
-          if [[ ! "$domain" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
-            echo "❌ Error: Invalid domain format: $domain"
-            echo "Domain should be a valid hostname (e.g., n8n.example.com)"
-            exit 1
-          fi
-          
-          echo "✅ Domain format is valid: $domain"
-          
-          # Em produção, verifica se o domínio resolve
-          if [[ "${{ steps.check_env.outputs.is_test }}" != "true" ]] && ! host "$domain" >/dev/null 2>&1; then
-            echo "⚠️ Warning: Domain $domain is not resolvable yet"
-            echo "Make sure to configure DNS after deployment"
-          fi
-
-      - name: Validate Auth Password
-        if: steps.check_env.outputs.is_test != 'true'
-        run: |
-          echo "🔍 Testing authentication password..."
-          password="${{ secrets.N8N_BASIC_AUTH_PASSWORD }}"
-          
-          # Verifica comprimento mínimo
-          if [ ${#password} -lt 8 ]; then
-            echo "❌ Error: Password is too short (minimum 8 characters)"
-            exit 1
-          fi
-          
-          # Verifica complexidade
-          if [[ ! "$password" =~ [A-Z] ]] || [[ ! "$password" =~ [a-z] ]] || [[ ! "$password" =~ [0-9] ]]; then
-            echo "❌ Error: Password must contain uppercase, lowercase, and numbers"
-            exit 1
-          fi
-          
-          echo "✅ Password meets security requirements"
 
       - name: Summary
         run: |
