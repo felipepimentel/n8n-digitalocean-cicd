@@ -45,6 +45,10 @@ const (
 	// File permissions.
 	sshDirPerm  = 0o700
 	sshFilePerm = 0o600
+
+	defaultGithubHome = "/home/runner"
+	sshKeyName        = "id_rsa"
+	sshDirName        = ".ssh"
 )
 
 var (
@@ -123,6 +127,14 @@ func main() {
 }
 
 func loadConfig() Config {
+	// Get home directory for SSH key path
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		homeDir = defaultGithubHome // Default for GitHub Actions
+	}
+
+	defaultSSHPath := filepath.Join(homeDir, sshDirName, sshKeyName)
+
 	return Config{
 		doToken:        requireEnv("DIGITALOCEAN_ACCESS_TOKEN"),
 		registryURL:    "registry.digitalocean.com",
@@ -135,7 +147,7 @@ func loadConfig() Config {
 		encryptionKey:  requireEnv("N8N_ENCRYPTION_KEY"),
 		basicAuthUser:  requireEnvOrDefault("N8N_BASIC_AUTH_USER", "admin"),
 		basicAuthPass:  requireEnvOrDefault("N8N_BASIC_AUTH_PASS", "n8n-admin"),
-		sshKeyPath:     requireEnvOrDefault("SSH_KEY_PATH", "~/.ssh/id_rsa"),
+		sshKeyPath:     requireEnvOrDefault("SSH_KEY_PATH", defaultSSHPath),
 	}
 }
 
@@ -978,24 +990,27 @@ func requireEnvOrDefault(key, defaultValue string) string {
 }
 
 func setupSSHKey(keyPath, privateKey string) error {
-	// Expand ~ to home directory if present
-	if strings.HasPrefix(keyPath, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("failed to get home directory: %w", err)
+	absPath := keyPath
+
+	// Always use absolute path
+	if !filepath.IsAbs(keyPath) {
+		homeDir := os.Getenv("HOME")
+		if homeDir == "" {
+			homeDir = defaultGithubHome
 		}
 
-		keyPath = filepath.Join(home, keyPath[2:])
+		absPath = filepath.Join(homeDir, keyPath)
 	}
 
 	// Create .ssh directory if it doesn't exist
-	sshDir := filepath.Dir(keyPath)
+	sshDir := filepath.Dir(absPath)
+
 	if err := os.MkdirAll(sshDir, sshDirPerm); err != nil {
 		return fmt.Errorf("failed to create SSH directory: %w", err)
 	}
 
 	// Write private key to file
-	if err := os.WriteFile(keyPath, []byte(privateKey), sshFilePerm); err != nil {
+	if err := os.WriteFile(absPath, []byte(privateKey), sshFilePerm); err != nil {
 		return fmt.Errorf("failed to write SSH key file: %w", err)
 	}
 
