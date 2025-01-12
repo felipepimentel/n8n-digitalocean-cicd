@@ -70,15 +70,21 @@ jobs:
         run: |
           # Determina se é ambiente de teste baseado na branch
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            if [ -z "${{ secrets.N8N_DOMAIN }}" ]; then
+              echo "❌ Error: N8N_DOMAIN secret is not set for production"
+              exit 1
+            fi
             echo "is_test=false" >> $GITHUB_OUTPUT
             echo "password=${{ secrets.N8N_BASIC_AUTH_PASSWORD }}" >> $GITHUB_OUTPUT
             echo "domain=${{ secrets.N8N_DOMAIN }}" >> $GITHUB_OUTPUT
             echo "🔒 Production environment detected - using secure password"
+            echo "🌐 Using production domain from secrets"
           else
             echo "is_test=true" >> $GITHUB_OUTPUT
             echo "password=${{ env.N8N_TEST_PASSWORD }}" >> $GITHUB_OUTPUT
             echo "domain=${{ env.N8N_TEST_DOMAIN }}" >> $GITHUB_OUTPUT
             echo "⚠️ Test environment detected - using simple password (teste123)"
+            echo "🌐 Using test domain: ${{ env.N8N_TEST_DOMAIN }}"
           fi
 
       - name: Validate DigitalOcean Token
@@ -100,11 +106,30 @@ jobs:
         run: |
           echo "🔍 Testing domain configuration..."
           domain="${{ steps.check_env.outputs.domain }}"
-          echo "Domain to be used: $domain"
           
+          # Verifica se o domínio está vazio
+          if [ -z "$domain" ]; then
+            echo "❌ Error: Domain is empty"
+            echo "Check if N8N_DOMAIN secret is set correctly"
+            exit 1
+          fi
+          
+          # Verifica o comprimento do domínio
+          if [ ${#domain} -lt 4 ] || [ ${#domain} -gt 253 ]; then
+            echo "❌ Error: Invalid domain length: ${#domain} characters"
+            echo "Domain length should be between 4 and 253 characters"
+            exit 1
+          fi
+          
+          # Verifica o formato do domínio
           if [[ ! "$domain" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
-            echo "❌ Error: Invalid domain format: $domain"
+            echo "❌ Error: Invalid domain format"
             echo "Domain should be a valid hostname (e.g., n8n.example.com)"
+            echo "Domain should:"
+            echo "  - Start with a letter or number"
+            echo "  - Contain only letters, numbers, and hyphens"
+            echo "  - End with a valid TLD"
+            echo "  - Not exceed 253 characters"
             exit 1
           fi
           
