@@ -31,62 +31,79 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ssh_setup: ${{ steps.ssh_setup.outputs.success }}
-      env_vars: ${{ steps.env_vars.outputs.json }}
+      ssh_key_fingerprint: ${{ steps.register_key.outputs.fingerprint }}
+      ssh_key_id: ${{ steps.register_key.outputs.key_id }}
+      ssh_private_key: ${{ steps.generate_key.outputs.private_key }}
     steps:
+      - name: Generate SSH Key
+        id: generate_key
+        run: |
+          # Generate SSH key pair
+          ssh-keygen -t ed25519 -f ~/.ssh/id_rsa -N "" -C "n8n-deployment-$(date +%s)"
+          
+          # Store keys for output
+          echo "private_key=$(cat ~/.ssh/id_rsa | base64 -w 0)" >> $GITHUB_OUTPUT
+          echo "public_key=$(cat ~/.ssh/id_rsa.pub)" >> $GITHUB_OUTPUT
+          
+          # Set proper permissions
+          chmod 600 ~/.ssh/id_rsa
+          chmod 644 ~/.ssh/id_rsa.pub
+
+      - name: Register SSH Key with DigitalOcean
+        id: register_key
+        run: |
+          # Register SSH key with DigitalOcean API
+          response=$(curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" \
+            -d "{\"name\":\"n8n-deployment-$(date +%Y%m%d-%H%M%S)\",\"public_key\":\"$(cat ~/.ssh/id_rsa.pub)\"}" \
+            "https://api.digitalocean.com/v2/account/keys")
+          
+          # Extract fingerprint and key ID from response
+          fingerprint=$(echo $response | jq -r '.ssh_key.fingerprint')
+          key_id=$(echo $response | jq -r '.ssh_key.id')
+          
+          if [ -z "$fingerprint" ] || [ "$fingerprint" = "null" ] || [ -z "$key_id" ] || [ "$key_id" = "null" ]; then
+            echo "Error registering SSH key with DigitalOcean"
+            echo "Response: $response"
+            exit 1
+          fi
+          
+          echo "fingerprint=$fingerprint" >> $GITHUB_OUTPUT
+          echo "key_id=$key_id" >> $GITHUB_OUTPUT
+          echo "SSH key registered with fingerprint: $fingerprint and ID: $key_id"
+
       - name: Set up SSH
         id: ssh_setup
-        shell: bash
         run: |
           # Create .ssh directory with correct permissions
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           
-          # Decode and write the SSH key
-          echo "${{ secrets.DO_SSH_PRIVATE_KEY }}" | base64 -d > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          
-          # Verify the key format
-          if ! grep -q "BEGIN .* PRIVATE KEY" ~/.ssh/id_rsa; then
-            echo "Error: Invalid SSH key format - missing header"
-            exit 1
-          fi
-          
-          if ! grep -q "END .* PRIVATE KEY" ~/.ssh/id_rsa; then
-            echo "Error: Invalid SSH key format - missing footer"
-            exit 1
-          fi
-          
           # Add known hosts
           ssh-keyscan -H digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
           ssh-keyscan -H registry.digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
           
-          # Test SSH key
-          if ssh-keygen -l -f ~/.ssh/id_rsa &>/dev/null; then
-            echo "SSH key is valid"
-            echo "success=true" >> $GITHUB_OUTPUT
-          else
-            echo "Error: Invalid SSH key"
-            echo "success=false" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-          
-          # Start ssh-agent
+          # Start ssh-agent and add key
           eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/id_rsa
-
-      - name: Prepare environment variables
-        id: env_vars
-        run: |
-          echo "json=$(cat << 'EOF' | jq -c .
-          {
-            "N8N_BASIC_AUTH_ACTIVE": "true",
-            "N8N_BASIC_AUTH_USER": "admin",
-            "N8N_DOMAIN": "${{ secrets.N8N_DOMAIN }}",
-            "N8N_ENCRYPTION_KEY": "${{ secrets.N8N_ENCRYPTION_KEY }}",
-            "N8N_BASIC_AUTH_PASSWORD": "${{ secrets.N8N_BASIC_AUTH_PASSWORD }}"
+          ssh-add ~/.ssh/id_rsa || {
+            echo "Error: Failed to add SSH key to agent"
+            exit 1
           }
-          EOF
-          )" >> $GITHUB_OUTPUT
+          
+          # Success
+          echo "SSH key setup completed successfully"
+          echo "success=true" >> $GITHUB_OUTPUT
+
+      - name: Cleanup SSH Key
+        if: always()
+        run: |
+          # Delete SSH key from DigitalOcean if it exists
+          if [ -n "${{ steps.register_key.outputs.key_id }}" ]; then
+            curl -X DELETE \
+              -H "Authorization: Bearer ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" \
+              "https://api.digitalocean.com/v2/account/keys/${{ steps.register_key.outputs.key_id }}"
+          fi
 
   pipeline:
     needs: setup
@@ -97,6 +114,11 @@ jobs:
       dagger_version: "0.15.1"
       app_name: "n8n"
       workdir: "."
-      env_vars: ${{ needs.setup.outputs.env_vars }}
     secrets:
-      digitalocean_token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      DO_SSH_KEY_FINGERPRINT: ${{ needs.setup.outputs.ssh_key_fingerprint }}
+      DO_SSH_KEY_ID: ${{ needs.setup.outputs.ssh_key_id }}
+      DO_SSH_PRIVATE_KEY: ${{ needs.setup.outputs.ssh_private_key }}
+      N8N_BASIC_AUTH_PASSWORD: ${{ secrets.N8N_BASIC_AUTH_PASSWORD }}
+      N8N_DOMAIN: ${{ secrets.N8N_DOMAIN }}
+      N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
