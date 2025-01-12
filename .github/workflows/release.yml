@@ -28,6 +28,8 @@ env:
   N8N_TEST_PASSWORD: "teste123"
   # Chave de criptografia padrão para ambiente de teste
   N8N_TEST_ENCRYPTION_KEY: "12345678901234567890123456789012"
+  # Domínio padrão para ambiente de teste
+  N8N_TEST_DOMAIN: "n8n.pepper88.com"
 
 jobs:
   validate:
@@ -36,6 +38,7 @@ jobs:
       is_test_env: ${{ steps.check_env.outputs.is_test }}
       auth_password: ${{ steps.check_env.outputs.password }}
       encryption_key: ${{ steps.encryption_key.outputs.key }}
+      domain: ${{ steps.check_env.outputs.domain }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -68,10 +71,12 @@ jobs:
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             echo "is_test=false" >> $GITHUB_OUTPUT
             echo "password=${{ secrets.N8N_BASIC_AUTH_PASSWORD }}" >> $GITHUB_OUTPUT
+            echo "domain=${{ secrets.N8N_DOMAIN }}" >> $GITHUB_OUTPUT
             echo "🔒 Production environment detected - using secure password"
           else
             echo "is_test=true" >> $GITHUB_OUTPUT
             echo "password=${{ env.N8N_TEST_PASSWORD }}" >> $GITHUB_OUTPUT
+            echo "domain=${{ env.N8N_TEST_DOMAIN }}" >> $GITHUB_OUTPUT
             echo "⚠️ Test environment detected - using simple password (teste123)"
           fi
 
@@ -93,7 +98,7 @@ jobs:
       - name: Validate Domain
         run: |
           echo "🔍 Testing domain configuration..."
-          domain="${{ secrets.N8N_DOMAIN }}"
+          domain="${{ steps.check_env.outputs.domain }}"
           
           if [[ ! "$domain" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
             echo "❌ Error: Invalid domain format: $domain"
@@ -101,10 +106,10 @@ jobs:
             exit 1
           fi
           
-          # Verifica se o domínio resolve
-          if host "$domain" >/dev/null 2>&1; then
-            echo "✅ Domain $domain is resolvable"
-          else
+          echo "✅ Domain format is valid: $domain"
+          
+          # Em produção, verifica se o domínio resolve
+          if [[ "${{ steps.check_env.outputs.is_test }}" != "true" ]] && ! host "$domain" >/dev/null 2>&1; then
             echo "⚠️ Warning: Domain $domain is not resolvable yet"
             echo "Make sure to configure DNS after deployment"
           fi
@@ -137,6 +142,7 @@ jobs:
             echo "⚠️ Using test credentials:"
             echo "  - Username: admin"
             echo "  - Password: teste123"
+            echo "  - Domain: ${{ env.N8N_TEST_DOMAIN }}"
             echo "  - Encryption Key: ${{ env.N8N_TEST_ENCRYPTION_KEY }}"
           fi
 
@@ -152,5 +158,5 @@ jobs:
     secrets:
       DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
       N8N_BASIC_AUTH_PASSWORD: ${{ needs.validate.outputs.auth_password }}
-      N8N_DOMAIN: ${{ secrets.N8N_DOMAIN }}
+      N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
       N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
