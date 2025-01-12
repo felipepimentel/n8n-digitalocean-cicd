@@ -1027,23 +1027,24 @@ func setupSSHKey(keyPath, privateKey string) error {
 		return fmt.Errorf("failed to write SSH key file: %w", err)
 	}
 
-	// Start ssh-agent and add the key
-	startAgentCmd := `
-if [ -z "$SSH_AUTH_SOCK" ]; then
-	eval "$(ssh-agent -s)"
-fi
-chmod 600 ` + absPath + `
-ssh-add ` + absPath + ` || ssh-add -l`
+	// Convert the key to RSA format without passphrase
+	convertCmd := fmt.Sprintf(`
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+cp %s ~/.ssh/id_rsa_encrypted
+chmod 600 ~/.ssh/id_rsa_encrypted
+ssh-keygen -p -N "" -f ~/.ssh/id_rsa_encrypted -m pem
+mv ~/.ssh/id_rsa_encrypted %s
+chmod 600 %s
+eval "$(ssh-agent -s)"
+ssh-add %s`, absPath, absPath, absPath, absPath)
 
-	cmd := exec.Command("bash", "-c", startAgentCmd)
-
-	// Set environment variables for non-interactive SSH key addition
-	env := os.Environ()
-	env = append(env, "SSH_ASKPASS=/bin/false", "DISPLAY=")
+	env := append(os.Environ(), "SSH_ASKPASS=/bin/false", "DISPLAY=")
+	cmd := exec.Command("bash", "-c", convertCmd)
 	cmd.Env = env
 
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to add key to ssh-agent: %w\nOutput: %s", err, output)
+		return fmt.Errorf("failed to convert and add SSH key: %w\nOutput: %s", err, output)
 	}
 
 	return nil
