@@ -53,18 +53,19 @@ const (
 )
 
 var (
-	ErrInvalidSSHKey    = errors.New("invalid SSH key ID")
-	ErrSSHClient        = errors.New("failed to create SSH client")
-	ErrDeployment       = errors.New("deployment failed")
-	ErrEnvVarNotSet     = errors.New("environment variable not set")
-	ErrEnvVarParseInt   = errors.New("failed to parse environment variable as integer")
-	ErrDomainNotFound   = errors.New("domain not found")
-	ErrDomainCreation   = errors.New("failed to create domain")
-	ErrSSHKeyNotFound   = errors.New("SSH key not found")
-	ErrDNSPropagation   = errors.New("timeout waiting for DNS propagation")
-	ErrRegistryEmpty    = errors.New("registry creation failed: no registry name returned")
-	ErrEmptyCredentials = errors.New("empty registry credentials received")
-	ErrRegistryNotReady = errors.New("registry not ready after maximum retries")
+	ErrInvalidSSHKey       = errors.New("invalid SSH key ID")
+	ErrSSHClient           = errors.New("failed to create SSH client")
+	ErrDeployment          = errors.New("deployment failed")
+	ErrEnvVarNotSet        = errors.New("environment variable not set")
+	ErrEnvVarParseInt      = errors.New("failed to parse environment variable as integer")
+	ErrDomainNotFound      = errors.New("domain not found")
+	ErrDomainCreation      = errors.New("failed to create domain")
+	ErrSSHKeyNotFound      = errors.New("SSH key not found")
+	ErrDNSPropagation      = errors.New("timeout waiting for DNS propagation")
+	ErrRegistryEmpty       = errors.New("registry creation failed: no registry name returned")
+	ErrEmptyCredentials    = errors.New("empty registry credentials received")
+	ErrRegistryNotReady    = errors.New("registry not ready after maximum retries")
+	ErrInvalidSSHKeyFormat = errors.New("invalid SSH key format: key must begin with '-----BEGIN'")
 )
 
 type Config struct {
@@ -1010,15 +1011,29 @@ func setupSSHKey(keyPath, privateKey string) error {
 		return fmt.Errorf("failed to create SSH directory: %w", err)
 	}
 
+	// Ensure the key is in the correct format (remove any extra newlines)
+	cleanKey := strings.TrimSpace(privateKey)
+	if !strings.HasPrefix(cleanKey, "-----BEGIN") {
+		return ErrInvalidSSHKeyFormat
+	}
+
+	// Add newline at the end if missing
+	if !strings.HasSuffix(cleanKey, "\n") {
+		cleanKey += "\n"
+	}
+
 	// Write private key to file
-	if err := os.WriteFile(absPath, []byte(privateKey), sshFilePerm); err != nil {
+	if err := os.WriteFile(absPath, []byte(cleanKey), sshFilePerm); err != nil {
 		return fmt.Errorf("failed to write SSH key file: %w", err)
 	}
 
 	// Start ssh-agent and add the key
 	startAgentCmd := `
-eval "$(ssh-agent -s)"
-ssh-add ` + absPath
+if [ -z "$SSH_AUTH_SOCK" ]; then
+	eval "$(ssh-agent -s)"
+fi
+chmod 600 ` + absPath + `
+ssh-add ` + absPath + ` || ssh-add -l`
 
 	cmd := exec.Command("bash", "-c", startAgentCmd)
 
