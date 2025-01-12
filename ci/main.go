@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -1012,6 +1013,22 @@ func setupSSHKey(keyPath, privateKey string) error {
 	// Write private key to file
 	if err := os.WriteFile(absPath, []byte(privateKey), sshFilePerm); err != nil {
 		return fmt.Errorf("failed to write SSH key file: %w", err)
+	}
+
+	// Start ssh-agent and add the key
+	startAgentCmd := `
+eval "$(ssh-agent -s)"
+ssh-add ` + absPath
+
+	cmd := exec.Command("bash", "-c", startAgentCmd)
+
+	// Set environment variables for non-interactive SSH key addition
+	env := os.Environ()
+	env = append(env, "SSH_ASKPASS=/bin/false", "DISPLAY=")
+	cmd.Env = env
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to add key to ssh-agent: %w\nOutput: %s", err, output)
 	}
 
 	return nil

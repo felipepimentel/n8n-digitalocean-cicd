@@ -1,66 +1,88 @@
 package ssh
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 const (
-	defaultTimeout = 30 * time.Second
+	defaultTimeout = 10 * time.Second
 )
 
 var (
-	ErrReadKey     = fmt.Errorf("unable to read private key")
-	ErrParseKey    = fmt.Errorf("unable to parse private key")
-	ErrDial        = fmt.Errorf("failed to dial")
-	ErrSession     = fmt.Errorf("failed to create session")
-	ErrExecCommand = fmt.Errorf("failed to execute command")
+	ErrSSHAuthSockNotSet = errors.New("SSH_AUTH_SOCK not set")
 )
 
 type Client struct {
 	client *ssh.Client
 }
 
-func NewClient(host string, port int, user, privateKeyPath string) (*Client, error) {
-	privateKey, err := os.ReadFile(privateKeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrReadKey, err)
+func NewClient(host string, port int, user, keyPath string) (*Client, error) {
+	// Try to connect to SSH agent
+	socket := os.Getenv("SSH_AUTH_SOCK")
+	if socket == "" {
+		return nil, ErrSSHAuthSockNotSet
 	}
 
-	signer, err := ssh.ParsePrivateKey(privateKey)
+	conn, err := net.Dial("unix", socket)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrParseKey, err)
+		return nil, fmt.Errorf("failed to connect to SSH agent: %w", err)
 	}
 
+	agentClient := agent.NewClient(conn)
+
+	// Create SSH client config
 	config := &ssh.ClientConfig{
-		User:            user,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // #nosec G106
+		User: user,
+		Auth: []ssh.AuthMethod{
+			// Use SSH agent for authentication
+			ssh.PublicKeysCallback(agentClient.Signers),
+		},
+		// #nosec G106 -- Using InsecureIgnoreHostKey is acceptable for this use case
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         defaultTimeout,
 	}
 
-	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), config)
+	// Connect to remote host
+	addr := fmt.Sprintf("%s:%d", host, port)
+
+	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrDial, err)
+		return nil, fmt.Errorf("failed to connect to %s: %w", addr, err)
 	}
 
-	return &Client{client: client}, nil
+	return &Client{
+		client: client,
+	}, nil
 }
 
 func (c *Client) ExecuteCommand(command string) (string, error) {
+	// Create session
 	session, err := c.client.NewSession()
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrSession, err)
+		return "", fmt.Errorf("failed to create session: %w", err)
 	}
 	defer session.Close()
 
+	// Run command and capture output
 	output, err := session.CombinedOutput(command)
 	if err != nil {
-		return string(output), fmt.Errorf("%w: %v", ErrExecCommand, err)
+		return string(output), fmt.Errorf("failed to run command: %w", err)
 	}
 
 	return string(output), nil
+}
+
+func (c *Client) Close() error {
+	if c.client != nil {
+		return c.client.Close()
+	}
+
+	return nil
 }
