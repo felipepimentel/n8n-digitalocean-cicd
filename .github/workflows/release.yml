@@ -24,101 +24,118 @@ env:
   DROPLET_NAME: n8n-server
   N8N_VERSION: latest
   N8N_BASIC_AUTH_USER: admin
-  DO_SSH_KEY_PATH: ~/.ssh/id_rsa
+  # Senha padrão para ambiente de teste
+  N8N_TEST_PASSWORD: "n8n-test-password"
 
 jobs:
-  setup:
+  validate:
     runs-on: ubuntu-latest
     outputs:
-      ssh_setup: ${{ steps.ssh_setup.outputs.success }}
-      ssh_key_fingerprint: ${{ steps.register_key.outputs.fingerprint }}
-      ssh_key_id: ${{ steps.register_key.outputs.key_id }}
-      ssh_private_key: ${{ steps.generate_key.outputs.private_key }}
+      is_test_env: ${{ steps.check_env.outputs.is_test }}
+      auth_password: ${{ steps.check_env.outputs.password }}
     steps:
-      - name: Generate SSH Key
-        id: generate_key
-        run: |
-          # Generate SSH key pair
-          ssh-keygen -t ed25519 -f ~/.ssh/id_rsa -N "" -C "n8n-deployment-$(date +%s)"
-          
-          # Store keys for output
-          echo "private_key=$(cat ~/.ssh/id_rsa | base64 -w 0)" >> $GITHUB_OUTPUT
-          echo "public_key=$(cat ~/.ssh/id_rsa.pub)" >> $GITHUB_OUTPUT
-          
-          # Set proper permissions
-          chmod 600 ~/.ssh/id_rsa
-          chmod 644 ~/.ssh/id_rsa.pub
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Register SSH Key with DigitalOcean
-        id: register_key
+      - name: Check environment
+        id: check_env
         run: |
-          # Register SSH key with DigitalOcean API
-          response=$(curl -X POST \
-            -H "Content-Type: application/json" \
+          # Determina se é ambiente de teste baseado na branch
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "is_test=false" >> $GITHUB_OUTPUT
+            echo "password=${{ secrets.N8N_BASIC_AUTH_PASSWORD }}" >> $GITHUB_OUTPUT
+          else
+            echo "is_test=true" >> $GITHUB_OUTPUT
+            echo "password=${{ env.N8N_TEST_PASSWORD }}" >> $GITHUB_OUTPUT
+            echo "⚠️ Test environment detected - using default password"
+          fi
+
+      - name: Validate DigitalOcean Token
+        run: |
+          echo "🔍 Testing DigitalOcean API Token..."
+          response=$(curl -s -X GET \
             -H "Authorization: Bearer ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" \
-            -d "{\"name\":\"n8n-deployment-$(date +%Y%m%d-%H%M%S)\",\"public_key\":\"$(cat ~/.ssh/id_rsa.pub)\"}" \
-            "https://api.digitalocean.com/v2/account/keys")
+            "https://api.digitalocean.com/v2/account")
           
-          # Extract fingerprint and key ID from response
-          fingerprint=$(echo $response | jq -r '.ssh_key.fingerprint')
-          key_id=$(echo $response | jq -r '.ssh_key.id')
-          
-          if [ -z "$fingerprint" ] || [ "$fingerprint" = "null" ] || [ -z "$key_id" ] || [ "$key_id" = "null" ]; then
-            echo "Error registering SSH key with DigitalOcean"
+          if echo "$response" | jq -e '.account' >/dev/null; then
+            echo "✅ DigitalOcean API Token is valid"
+          else
+            echo "❌ Error: Invalid DigitalOcean API Token"
             echo "Response: $response"
             exit 1
           fi
-          
-          echo "fingerprint=$fingerprint" >> $GITHUB_OUTPUT
-          echo "key_id=$key_id" >> $GITHUB_OUTPUT
-          echo "SSH key registered with fingerprint: $fingerprint and ID: $key_id"
 
-      - name: Set up SSH
-        id: ssh_setup
+      - name: Validate Domain
         run: |
-          # Create .ssh directory with correct permissions
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
+          echo "🔍 Testing domain configuration..."
+          domain="${{ secrets.N8N_DOMAIN }}"
           
-          # Add known hosts
-          ssh-keyscan -H digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
-          ssh-keyscan -H registry.digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
-          
-          # Start ssh-agent and add key
-          eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/id_rsa || {
-            echo "Error: Failed to add SSH key to agent"
+          if [[ ! "$domain" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
+            echo "❌ Error: Invalid domain format: $domain"
+            echo "Domain should be a valid hostname (e.g., n8n.example.com)"
             exit 1
-          }
+          fi
           
-          # Success
-          echo "SSH key setup completed successfully"
-          echo "success=true" >> $GITHUB_OUTPUT
-
-      - name: Cleanup SSH Key
-        if: always()
-        run: |
-          # Delete SSH key from DigitalOcean if it exists
-          if [ -n "${{ steps.register_key.outputs.key_id }}" ]; then
-            curl -X DELETE \
-              -H "Authorization: Bearer ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" \
-              "https://api.digitalocean.com/v2/account/keys/${{ steps.register_key.outputs.key_id }}"
+          # Verifica se o domínio resolve
+          if host "$domain" >/dev/null 2>&1; then
+            echo "✅ Domain $domain is resolvable"
+          else
+            echo "⚠️ Warning: Domain $domain is not resolvable yet"
+            echo "Make sure to configure DNS after deployment"
           fi
 
-  pipeline:
-    needs: setup
-    if: needs.setup.outputs.ssh_setup == 'true'
+      - name: Validate Encryption Key
+        run: |
+          echo "🔍 Testing encryption key..."
+          key="${{ secrets.N8N_ENCRYPTION_KEY }}"
+          
+          if [[ ! "$key" =~ ^[a-fA-F0-9]{32}$ ]]; then
+            echo "❌ Error: Invalid encryption key format"
+            echo "Key should be a 32-character hexadecimal string"
+            exit 1
+          fi
+          
+          echo "✅ Encryption key format is valid"
+
+      - name: Validate Auth Password
+        if: steps.check_env.outputs.is_test != 'true'
+        run: |
+          echo "🔍 Testing authentication password..."
+          password="${{ secrets.N8N_BASIC_AUTH_PASSWORD }}"
+          
+          # Verifica comprimento mínimo
+          if [ ${#password} -lt 8 ]; then
+            echo "❌ Error: Password is too short (minimum 8 characters)"
+            exit 1
+          fi
+          
+          # Verifica complexidade
+          if [[ ! "$password" =~ [A-Z] ]] || [[ ! "$password" =~ [a-z] ]] || [[ ! "$password" =~ [0-9] ]]; then
+            echo "❌ Error: Password must contain uppercase, lowercase, and numbers"
+            exit 1
+          fi
+          
+          echo "✅ Password meets security requirements"
+
+      - name: Summary
+        run: |
+          echo "🎉 All validations passed!"
+          echo "Environment: ${{ steps.check_env.outputs.is_test == 'true' && 'TEST' || 'PRODUCTION' }}"
+          if [ "${{ steps.check_env.outputs.is_test }}" == "true" ]; then
+            echo "⚠️ Using default test password"
+          fi
+
+  deploy:
+    needs: validate
     uses: felipepimentel/daggerverse/.github/workflows/reusable-n8n-ci-cd.yml@main
     with:
       repository: ${{ github.repository }}
       dagger_version: "0.15.1"
       app_name: "n8n"
       workdir: "."
+      region: "nyc1"
     secrets:
       DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-      DO_SSH_KEY_FINGERPRINT: ${{ needs.setup.outputs.ssh_key_fingerprint }}
-      DO_SSH_KEY_ID: ${{ needs.setup.outputs.ssh_key_id }}
-      DO_SSH_PRIVATE_KEY: ${{ needs.setup.outputs.ssh_private_key }}
-      N8N_BASIC_AUTH_PASSWORD: ${{ secrets.N8N_BASIC_AUTH_PASSWORD }}
+      N8N_BASIC_AUTH_PASSWORD: ${{ needs.validate.outputs.auth_password }}
       N8N_DOMAIN: ${{ secrets.N8N_DOMAIN }}
       N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
