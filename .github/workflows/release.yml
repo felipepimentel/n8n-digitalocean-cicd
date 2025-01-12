@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  id-token: write
+  issues: write
+  pull-requests: write
+  packages: write
+  statuses: write
+  actions: read
+
+env:
+  ACTIONS_RUNNER_DEBUG: true
+  ACTIONS_STEP_DEBUG: true
+
+jobs:
+  pipeline:
+    uses: felipepimentel/daggerverse/.github/workflows/reusable-n8n-ci-cd.yml@main
+    secrets:
+      digitalocean_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+    with:
+      dagger_version: "0.15.1"
+      app_name: "n8n"
