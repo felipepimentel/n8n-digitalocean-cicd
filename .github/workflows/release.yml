@@ -29,51 +29,48 @@ env:
 jobs:
   setup:
     runs-on: ubuntu-latest
+    outputs:
+      ssh_setup: ${{ steps.ssh_setup.outputs.success }}
     steps:
       - name: Set up SSH
+        id: ssh_setup
         shell: bash
         run: |
           # Create .ssh directory with correct permissions
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           
-          # Write the SSH key with proper line endings
-          echo "${{ secrets.DO_SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_rsa
+          # Write the SSH key with proper line endings and base64 decode
+          echo "${{ secrets.DO_SSH_PRIVATE_KEY }}" | base64 -d | tr -d '\r' > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           
-          # Verify the key format and permissions
-          if ! [[ $(head -n1 ~/.ssh/id_rsa) == "-----BEGIN"* ]]; then
-            echo "Error: Invalid SSH key format"
+          # Add known hosts
+          ssh-keyscan -H digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -H registry.digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
+          
+          # Test SSH key
+          if ssh-keygen -l -f ~/.ssh/id_rsa &>/dev/null; then
+            echo "SSH key is valid"
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "Error: Invalid SSH key"
+            echo "success=false" >> $GITHUB_OUTPUT
             exit 1
           fi
           
-          # Add known hosts
-          ssh-keyscan -t rsa,ecdsa digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
-          ssh-keyscan -t rsa,ecdsa registry.digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
-          
-          # Test SSH key
-          echo "Testing SSH key format:"
-          ssh-keygen -l -f ~/.ssh/id_rsa || {
-            echo "Error: Invalid SSH key"
-            exit 1
-          }
-          
-          # Set environment variables for ssh-agent
-          eval $(ssh-agent -s)
+          # Start ssh-agent
+          eval "$(ssh-agent -s)"
           ssh-add ~/.ssh/id_rsa
-        env:
-          DO_SSH_PRIVATE_KEY: ${{ secrets.DO_SSH_PRIVATE_KEY }}
-          DO_SSH_KEY_FINGERPRINT: ${{ secrets.DO_SSH_KEY_FINGERPRINT }}
-          N8N_DOMAIN: ${{ secrets.N8N_DOMAIN }}
-          N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
-          N8N_BASIC_AUTH_PASSWORD: ${{ secrets.N8N_BASIC_AUTH_PASSWORD }}
 
   pipeline:
     needs: setup
+    if: needs.setup.outputs.ssh_setup == 'true'
     uses: felipepimentel/daggerverse/.github/workflows/reusable-n8n-ci-cd.yml@main
     with:
       repository: ${{ github.repository }}
       dagger_version: "0.15.1"
       app_name: "n8n"
       workdir: "."
-      env_vars: '{"N8N_BASIC_AUTH_ACTIVE": "true", "N8N_BASIC_AUTH_USER": "admin", "N8N_DOMAIN": "${{ secrets.N8N_DOMAIN }}", "N8N_ENCRYPTION_KEY": "${{ secrets.N8N_ENCRYPTION_KEY }}", "N8N_BASIC_AUTH_PASSWORD": "${{ secrets.N8N_BASIC_AUTH_PASSWORD }}", "DO_SSH_KEY_FINGERPRINT": "${{ secrets.DO_SSH_KEY_FINGERPRINT }}", "DIGITALOCEAN_ACCESS_TOKEN": "${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}"}'
+      env_vars: '{"N8N_BASIC_AUTH_ACTIVE": "true", "N8N_BASIC_AUTH_USER": "admin", "N8N_DOMAIN": "${{ secrets.N8N_DOMAIN }}", "N8N_ENCRYPTION_KEY": "${{ secrets.N8N_ENCRYPTION_KEY }}", "N8N_BASIC_AUTH_PASSWORD": "${{ secrets.N8N_BASIC_AUTH_PASSWORD }}"}'
+    secrets:
+      digitalocean_token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
