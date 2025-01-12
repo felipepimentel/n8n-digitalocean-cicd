@@ -66,6 +66,7 @@ var (
 	ErrEmptyCredentials    = errors.New("empty registry credentials received")
 	ErrRegistryNotReady    = errors.New("registry not ready after maximum retries")
 	ErrInvalidSSHKeyFormat = errors.New("invalid SSH key format: key must begin with '-----BEGIN'")
+	ErrParseSSHAgentOutput = errors.New("failed to parse ssh-agent output")
 )
 
 type Config struct {
@@ -1022,37 +1023,41 @@ func setupSSHKey(keyPath, privateKey string) error {
 		cleanKey += "\n"
 	}
 
-	// Create a temporary file for the original key
-	tmpKeyPath := absPath + ".tmp"
-	if err := os.WriteFile(tmpKeyPath, []byte(cleanKey), sshFilePerm); err != nil {
-		return fmt.Errorf("failed to write temporary key file: %w", err)
-	}
-	defer os.Remove(tmpKeyPath)
-
-	// Use openssl to convert the key to RSA format without passphrase
-	cmd := exec.Command("openssl", "rsa", "-in", tmpKeyPath)
-	output, err := cmd.Output()
-
-	if err != nil {
-		return fmt.Errorf("failed to convert key: %w\nOutput: %s", err, output)
-	}
-
-	// Write the converted key to the final location
-	err = os.WriteFile(absPath, output, sshFilePerm)
-	if err != nil {
+	// Write the key directly to the file
+	if err := os.WriteFile(absPath, []byte(cleanKey), sshFilePerm); err != nil {
 		return fmt.Errorf("failed to write SSH key file: %w", err)
 	}
 
-	// Start ssh-agent and add the key
-	startAgentCmd := `
-eval "$(ssh-agent -s)"
-ssh-add ` + absPath
+	// Start ssh-agent
+	startAgentCmd := exec.Command("ssh-agent", "-s")
+	output, err := startAgentCmd.Output()
 
-	agentEnv := append(os.Environ(), "SSH_ASKPASS=/bin/false", "DISPLAY=")
-	cmd = exec.Command("bash", "-c", startAgentCmd)
-	cmd.Env = agentEnv
+	if err != nil {
+		return fmt.Errorf("failed to start ssh-agent: %w\nOutput: %s", err, output)
+	}
 
-	output, err = cmd.CombinedOutput()
+	// Parse SSH_AUTH_SOCK and SSH_AGENT_PID from ssh-agent output
+	agentOutput := string(output)
+	authSockMatch := regexp.MustCompile(`SSH_AUTH_SOCK=([^;]+)`).FindStringSubmatch(agentOutput)
+	agentPIDMatch := regexp.MustCompile(`SSH_AGENT_PID=([^;]+)`).FindStringSubmatch(agentOutput)
+
+	if len(authSockMatch) < 2 || len(agentPIDMatch) < 2 {
+		return fmt.Errorf("%w: %s", ErrParseSSHAgentOutput, agentOutput)
+	}
+
+	// Set environment variables for ssh-add
+	env := append(os.Environ(),
+		fmt.Sprintf("SSH_AUTH_SOCK=%s", authSockMatch[1]),
+		fmt.Sprintf("SSH_AGENT_PID=%s", agentPIDMatch[1]),
+		"SSH_ASKPASS=/bin/false",
+		"DISPLAY=",
+	)
+
+	// Add the key to ssh-agent
+	addKeyCmd := exec.Command("ssh-add", absPath)
+	addKeyCmd.Env = env
+
+	output, err = addKeyCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to add key to ssh-agent: %w\nOutput: %s", err, output)
 	}
