@@ -100,6 +100,7 @@ jobs:
         run: |
           echo "🔍 Testing domain configuration..."
           domain="${{ steps.check_env.outputs.domain }}"
+          echo "Domain to be used: $domain"
           
           if [[ ! "$domain" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
             echo "❌ Error: Invalid domain format: $domain"
