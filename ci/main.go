@@ -992,69 +992,75 @@ func requireEnvOrDefault(key, defaultValue string) string {
 	return value
 }
 
-func setupSSHKey(keyPath, privateKey string) error {
-	absPath := keyPath
-
-	// Always use absolute path
-	if !filepath.IsAbs(keyPath) {
-		homeDir := os.Getenv("HOME")
-		if homeDir == "" {
-			homeDir = defaultGithubHome
-		}
-
-		absPath = filepath.Join(homeDir, keyPath)
+func validateSSHKey(privateKey string) error {
+	trimmedKey := strings.TrimSpace(privateKey)
+	if !strings.HasPrefix(trimmedKey, "-----BEGIN") {
+		return fmt.Errorf("%w: key does not start with -----BEGIN", ErrInvalidSSHKeyFormat)
 	}
 
-	// Create .ssh directory if it doesn't exist
-	sshDir := filepath.Dir(absPath)
-
-	if err := os.MkdirAll(sshDir, sshDirPerm); err != nil {
-		return fmt.Errorf("failed to create SSH directory: %w", err)
+	if !strings.Contains(trimmedKey, "-----END") {
+		return fmt.Errorf("%w: key does not contain -----END", ErrInvalidSSHKeyFormat)
 	}
 
-	// Create a temporary file for the original key
-	tmpKeyPath := absPath + ".tmp"
-	if err := os.WriteFile(tmpKeyPath, []byte(privateKey), sshFilePerm); err != nil {
-		return fmt.Errorf("failed to write temporary key file: %w", err)
-	}
-	defer os.Remove(tmpKeyPath)
+	return nil
+}
 
-	// Create a new key without passphrase using ssh-keygen
+func getAbsolutePath(keyPath string) string {
+	if filepath.IsAbs(keyPath) {
+		return keyPath
+	}
+
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		homeDir = defaultGithubHome
+	}
+
+	return filepath.Join(homeDir, keyPath)
+}
+
+func writeKeyFile(path, content string, perm os.FileMode) error {
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+
+	if err := os.WriteFile(path, []byte(content), perm); err != nil {
+		return fmt.Errorf("failed to write file %s: %w", path, err)
+	}
+
+	return nil
+}
+
+func convertKey(tmpKeyPath string) error {
 	cmd := exec.Command("ssh-keygen", "-p", "-N", "", "-f", tmpKeyPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to remove passphrase: %w\nOutput: %s", err, output)
-	}
+	output, err := cmd.CombinedOutput()
 
-	// Read the key without passphrase
-	keyBytes, err := os.ReadFile(tmpKeyPath)
 	if err != nil {
-		return fmt.Errorf("failed to read key file: %w", err)
+		fmt.Printf("ssh-keygen error: %v\n", err)
+		fmt.Printf("ssh-keygen output: %s\n", string(output))
+
+		return fmt.Errorf("failed to convert key: %w\nCommand: ssh-keygen -p -N '' -f %s\nOutput: %s",
+			err, tmpKeyPath, string(output))
 	}
 
-	// Write the key without passphrase to the final location
-	err = os.WriteFile(absPath, keyBytes, sshFilePerm)
-	if err != nil {
-		return fmt.Errorf("failed to write SSH key file: %w", err)
-	}
+	return nil
+}
 
-	// Start ssh-agent
+func setupSSHAgent() ([]string, error) {
 	startAgentCmd := exec.Command("ssh-agent", "-s")
 	output, err := startAgentCmd.Output()
 
 	if err != nil {
-		return fmt.Errorf("failed to start ssh-agent: %w\nOutput: %s", err, output)
+		return nil, fmt.Errorf("failed to start ssh-agent: %w\nOutput: %s", err, output)
 	}
 
-	// Parse SSH_AUTH_SOCK and SSH_AGENT_PID from ssh-agent output
 	agentOutput := string(output)
 	authSockMatch := regexp.MustCompile(`SSH_AUTH_SOCK=([^;]+)`).FindStringSubmatch(agentOutput)
 	agentPIDMatch := regexp.MustCompile(`SSH_AGENT_PID=([^;]+)`).FindStringSubmatch(agentOutput)
 
 	if len(authSockMatch) < 2 || len(agentPIDMatch) < 2 {
-		return fmt.Errorf("%w: %s", ErrParseSSHAgentOutput, agentOutput)
+		return nil, fmt.Errorf("%w: %s", ErrParseSSHAgentOutput, agentOutput)
 	}
 
-	// Set environment variables for ssh-add
 	env := append(os.Environ(),
 		fmt.Sprintf("SSH_AUTH_SOCK=%s", authSockMatch[1]),
 		fmt.Sprintf("SSH_AGENT_PID=%s", agentPIDMatch[1]),
@@ -1062,14 +1068,76 @@ func setupSSHKey(keyPath, privateKey string) error {
 		"DISPLAY=",
 	)
 
-	// Add the key to ssh-agent
-	addKeyCmd := exec.Command("ssh-add", absPath)
+	return env, nil
+}
+
+func addKeyToAgent(keyPath string, env []string) error {
+	addKeyCmd := exec.Command("ssh-add", keyPath)
 	addKeyCmd.Env = env
 
-	output, err = addKeyCmd.CombinedOutput()
+	output, err := addKeyCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to add key to ssh-agent: %w\nOutput: %s", err, output)
 	}
+
+	return nil
+}
+
+func setupSSHKey(keyPath, privateKey string) error {
+	fmt.Printf("Setting up SSH key at path: %s\n", keyPath)
+
+	if err := validateSSHKey(privateKey); err != nil {
+		return err
+	}
+
+	absPath := getAbsolutePath(keyPath)
+	fmt.Printf("Using absolute path: %s\n", absPath)
+
+	sshDir := filepath.Dir(absPath)
+	if err := os.MkdirAll(sshDir, sshDirPerm); err != nil {
+		return fmt.Errorf("failed to create SSH directory %s: %w", sshDir, err)
+	}
+
+	fmt.Printf("Created SSH directory: %s\n", sshDir)
+
+	tmpKeyPath := absPath + ".tmp"
+	if err := writeKeyFile(tmpKeyPath, privateKey, sshFilePerm); err != nil {
+		return fmt.Errorf("failed to write temporary key file %s: %w", tmpKeyPath, err)
+	}
+	defer os.Remove(tmpKeyPath)
+
+	fmt.Printf("Wrote temporary key file: %s\n", tmpKeyPath)
+
+	if err := convertKey(tmpKeyPath); err != nil {
+		return err
+	}
+
+	fmt.Printf("Successfully converted key\n")
+
+	keyBytes, err := os.ReadFile(tmpKeyPath)
+	if err != nil {
+		return fmt.Errorf("failed to read key file %s: %w", tmpKeyPath, err)
+	}
+
+	keyStr := string(keyBytes)
+	if writeErr := writeKeyFile(absPath, keyStr, sshFilePerm); writeErr != nil {
+		return fmt.Errorf("failed to write SSH key file %s: %w", absPath, writeErr)
+	}
+
+	fmt.Printf("Wrote final key file: %s\n", absPath)
+
+	env, agentErr := setupSSHAgent()
+	if agentErr != nil {
+		return agentErr
+	}
+
+	fmt.Printf("Started ssh-agent\n")
+
+	if addErr := addKeyToAgent(absPath, env); addErr != nil {
+		return addErr
+	}
+
+	fmt.Printf("Successfully added key to ssh-agent\n")
 
 	return nil
 }

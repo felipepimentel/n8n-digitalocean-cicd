@@ -29,3 +29,4 @@ jobs:
     with:
       dagger_version: "0.15.1"
       app_name: "n8n"
+      workdir: "."
