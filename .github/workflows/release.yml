@@ -18,80 +18,8 @@ permissions:
   statuses: write
   actions: read
 
-env:
-  ACTIONS_RUNNER_DEBUG: true
-  ACTIONS_STEP_DEBUG: true
-  N8N_BASIC_AUTH_USER: admin
-  # Senha simples para ambiente de teste (usuário: admin, senha: teste123)
-  N8N_TEST_PASSWORD: "teste123"
-  # Chave de criptografia padrão para ambiente de teste
-  N8N_TEST_ENCRYPTION_KEY: "12345678901234567890123456789012"
-  # Domínio padrão para ambiente de teste
-  N8N_TEST_DOMAIN: "n8n.pepper88.com"
-
 jobs:
-  validate:
-    runs-on: ubuntu-latest
-    outputs:
-      is_test_env: ${{ steps.check_env.outputs.is_test }}
-      auth_password: ${{ steps.check_env.outputs.password }}
-      encryption_key: ${{ steps.encryption_key.outputs.key }}
-      domain: ${{ steps.check_env.outputs.domain }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Generate or Get Encryption Key
-        id: encryption_key
-        run: |
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            # Em produção, usa a chave configurada ou gera uma nova
-            if [ -n "${{ secrets.N8N_ENCRYPTION_KEY }}" ]; then
-              echo "key=${{ secrets.N8N_ENCRYPTION_KEY }}" >> $GITHUB_OUTPUT
-              echo "🔐 Using configured encryption key"
-            else
-              # Gera uma nova chave hexadecimal de 32 caracteres
-              new_key=$(openssl rand -hex 16)
-              echo "key=$new_key" >> $GITHUB_OUTPUT
-              echo "🔐 Generated new encryption key: $new_key"
-              echo "⚠️ Important: Save this key in your repository secrets for future use!"
-            fi
-          else
-            # Em teste, usa a chave padrão
-            echo "key=${{ env.N8N_TEST_ENCRYPTION_KEY }}" >> $GITHUB_OUTPUT
-            echo "🔑 Using test encryption key"
-          fi
-
-      - name: Check environment
-        id: check_env
-        run: |
-          # Determina se é ambiente de teste baseado na branch
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "is_test=false" >> $GITHUB_OUTPUT
-            echo "password=${{ secrets.N8N_BASIC_AUTH_PASSWORD }}" >> $GITHUB_OUTPUT
-            echo "domain=${{ secrets.N8N_DOMAIN }}" >> $GITHUB_OUTPUT
-            echo "🔒 Production environment detected - using secure password"
-          else
-            echo "is_test=true" >> $GITHUB_OUTPUT
-            echo "password=${{ env.N8N_TEST_PASSWORD }}" >> $GITHUB_OUTPUT
-            echo "domain=${{ env.N8N_TEST_DOMAIN }}" >> $GITHUB_OUTPUT
-            echo "⚠️ Test environment detected - using simple password (teste123)"
-          fi
-
-      - name: Summary
-        run: |
-          echo "🎉 All validations passed!"
-          echo "Environment: ${{ steps.check_env.outputs.is_test == 'true' && 'TEST' || 'PRODUCTION' }}"
-          if [ "${{ steps.check_env.outputs.is_test }}" == "true" ]; then
-            echo "⚠️ Using test credentials:"
-            echo "  - Username: admin"
-            echo "  - Password: teste123"
-            echo "  - Domain: ${{ env.N8N_TEST_DOMAIN }}"
-            echo "  - Encryption Key: ${{ env.N8N_TEST_ENCRYPTION_KEY }}"
-          fi
-
   deploy:
-    needs: validate
     uses: felipepimentel/daggerverse/.github/workflows/reusable-n8n-ci-cd.yml@main
     with:
       repository: ${{ github.repository }}
@@ -99,8 +27,4 @@ jobs:
       app_name: "n8n"
       workdir: "."
       region: "nyc1"
-    secrets:
-      DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-      N8N_BASIC_AUTH_PASSWORD: ${{ needs.validate.outputs.auth_password }}
-      N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
-      N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
+    secrets: inherit
