@@ -20,14 +20,21 @@ permissions:
 env:
   ACTIONS_RUNNER_DEBUG: true
   ACTIONS_STEP_DEBUG: true
+  DO_SSH_KEY_FINGERPRINT: ${{ secrets.DO_SSH_KEY_FINGERPRINT }}
+  DO_SSH_PRIVATE_KEY: ${{ secrets.DO_SSH_PRIVATE_KEY }}
+  N8N_DOMAIN: ${{ secrets.N8N_DOMAIN }}
+  N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
+  N8N_BASIC_AUTH_USER: admin
+  N8N_BASIC_AUTH_PASSWORD: ${{ secrets.N8N_BASIC_AUTH_PASSWORD }}
 
 jobs:
   pipeline:
     uses: felipepimentel/daggerverse/.github/workflows/reusable-n8n-ci-cd.yml@main
     secrets:
-      digitalocean_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+      digitalocean_token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
     with:
       repository: ${{ github.repository }}
       dagger_version: "0.15.1"
       app_name: "n8n"
       workdir: "."
+      env_vars: '{"N8N_BASIC_AUTH_ACTIVE": "true", "N8N_BASIC_AUTH_USER": "admin"}'
