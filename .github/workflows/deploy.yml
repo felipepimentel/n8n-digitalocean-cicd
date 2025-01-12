@@ -70,31 +70,34 @@ jobs:
 
       - name: Create SSH key file
         run: |
-          set -x  # Enable debug mode to see what's happening
+          # Create .ssh directory with correct permissions
           mkdir -p ~/.ssh
-          echo "${{ secrets.DO_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 700 ~/.ssh
+          
+          # Write the SSH key with proper line endings
+          echo "${{ secrets.DO_SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           
-          # Debug DNS resolution
-          echo "Testing DNS resolution..."
-          dig +short digitalocean.com || true
-          dig +short registry.digitalocean.com || true
+          # Verify the key format and permissions
+          if ! [[ $(head -n1 ~/.ssh/id_rsa) == "-----BEGIN"* ]]; then
+            echo "Error: Invalid SSH key format"
+            exit 1
+          fi
           
-          # Try with direct IP addresses
-          echo "Adding DigitalOcean hosts to known_hosts..."
-          # DigitalOcean API endpoints
-          ssh-keyscan -v -t rsa,ecdsa 167.99.122.236 >> ~/.ssh/known_hosts 2>&1 || true  # digitalocean.com
-          ssh-keyscan -v -t rsa,ecdsa 159.89.98.145 >> ~/.ssh/known_hosts 2>&1 || true   # registry.digitalocean.com
+          # Add known hosts
+          ssh-keyscan -t rsa,ecdsa digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -t rsa,ecdsa registry.digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
           
-          # Verify the contents
-          echo "Checking SSH directory contents:"
-          ls -la ~/.ssh/
-          echo "Checking known_hosts content:"
-          cat ~/.ssh/known_hosts
+          # Test SSH key
+          echo "Testing SSH key format:"
+          ssh-keygen -l -f ~/.ssh/id_rsa || {
+            echo "Error: Invalid SSH key"
+            exit 1
+          }
           
-          # Verify SSH key
-          echo "Verifying SSH key format..."
-          ssh-keygen -l -f ~/.ssh/id_rsa || true
+          # Set environment variables for ssh-agent
+          eval $(ssh-agent -s)
+          ssh-add ~/.ssh/id_rsa
 
       - name: Deploy n8n
         run: |
