@@ -29,8 +29,8 @@ env:
   N8N_TEST_PASSWORD: "teste123"
   # Chave de criptografia padrão para ambiente de teste
   N8N_TEST_ENCRYPTION_KEY: "12345678901234567890123456789012"
-  # Domínio padrão para ambiente de teste
-  N8N_TEST_DOMAIN: "n8n.pepper88.com"
+  # Domínio padrão
+  N8N_DOMAIN: "n8n.pepper88.com"
 
 jobs:
   validate:
@@ -70,21 +70,17 @@ jobs:
         run: |
           # Determina se é ambiente de teste baseado na branch
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            if [ -z "${{ secrets.N8N_DOMAIN }}" ]; then
-              echo "❌ Error: N8N_DOMAIN secret is not set for production"
-              exit 1
-            fi
             echo "is_test=false" >> $GITHUB_OUTPUT
             echo "password=${{ secrets.N8N_BASIC_AUTH_PASSWORD }}" >> $GITHUB_OUTPUT
-            echo "domain=${{ secrets.N8N_DOMAIN }}" >> $GITHUB_OUTPUT
+            echo "domain=${{ env.N8N_DOMAIN }}" >> $GITHUB_OUTPUT
             echo "🔒 Production environment detected - using secure password"
-            echo "🌐 Using production domain from secrets"
+            echo "🌐 Using domain: ${{ env.N8N_DOMAIN }}"
           else
             echo "is_test=true" >> $GITHUB_OUTPUT
             echo "password=${{ env.N8N_TEST_PASSWORD }}" >> $GITHUB_OUTPUT
-            echo "domain=${{ env.N8N_TEST_DOMAIN }}" >> $GITHUB_OUTPUT
+            echo "domain=${{ env.N8N_DOMAIN }}" >> $GITHUB_OUTPUT
             echo "⚠️ Test environment detected - using simple password (teste123)"
-            echo "🌐 Using test domain: ${{ env.N8N_TEST_DOMAIN }}"
+            echo "🌐 Using domain: ${{ env.N8N_DOMAIN }}"
           fi
 
       - name: Validate DigitalOcean Token
@@ -110,7 +106,7 @@ jobs:
           # Verifica se o domínio está vazio
           if [ -z "$domain" ]; then
             echo "❌ Error: Domain is empty"
-            echo "Check if N8N_DOMAIN secret is set correctly"
+            echo "Check if N8N_DOMAIN is set correctly"
             exit 1
           fi
           
@@ -149,7 +145,7 @@ jobs:
             echo "⚠️ Using test credentials:"
             echo "  - Username: admin"
             echo "  - Password: teste123"
-            echo "  - Domain: ${{ env.N8N_TEST_DOMAIN }}"
+            echo "  - Domain: ${{ env.N8N_DOMAIN }}"
             echo "  - Encryption Key: ${{ env.N8N_TEST_ENCRYPTION_KEY }}"
           fi
 
