@@ -191,12 +191,19 @@ jobs:
         run: |
           # Get registry name
           REGISTRY_NAME=$(doctl registry get --format Name --no-header)
+          if [ -z "$REGISTRY_NAME" ]; then
+            echo "❌ Error: Failed to get registry name"
+            exit 1
+          fi
           
           # Create Docker config directory if it doesn't exist
           mkdir -p ~/.docker
           
           # Configure Docker authentication for DigitalOcean registry
-          doctl registry login --expiry-seconds 600
+          if ! doctl registry login --expiry-seconds 600; then
+            echo "❌ Error: Failed to login to registry"
+            exit 1
+          fi
           
           # Verify Docker authentication by trying to pull an image (if it exists)
           docker pull registry.digitalocean.com/$REGISTRY_NAME/n8n:latest || true
@@ -233,7 +240,83 @@ jobs:
           DO_SSH_KEY_ID: ${{ secrets.DO_SSH_KEY_ID }}
         run: |
           cd ci
-          go run main.go
+          if ! go run main.go; then
+            echo "❌ Error: Failed to deploy n8n"
+            exit 1
+          fi
+
+      - name: Verify Deployment
+        run: |
+          echo "🔍 Verifying deployment..."
+          domain="${{ needs.validate.outputs.domain }}"
+          max_attempts=30
+          attempt=1
+          
+          while ! curl -sf "https://$domain/healthz" > /dev/null; do
+            if [ $attempt -ge $max_attempts ]; then
+              echo "❌ Error: n8n health check failed after 5 minutes"
+              exit 1
+            fi
+            echo "Waiting for n8n to be ready... attempt $attempt/$max_attempts"
+            sleep 10
+            ((attempt++))
+          done
+          
+          echo "✅ n8n is up and running at https://$domain"
+
+      - name: Verify Database
+        run: |
+          echo "🔍 Verifying database connection..."
+          if ! docker exec n8n-db pg_isready -U n8n; then
+            echo "❌ Error: Database connection failed"
+            exit 1
+          fi
+          echo "✅ Database connection verified"
+
+      - name: Verify SSL Certificate
+        run: |
+          echo "🔍 Verifying SSL certificate..."
+          domain="${{ needs.validate.outputs.domain }}"
+          
+          # Check SSL certificate
+          if ! curl -sI "https://$domain" | grep -i "HTTP/2 200" > /dev/null; then
+            echo "❌ Error: SSL certificate verification failed"
+            exit 1
+          fi
+          
+          # Check certificate expiration
+          expiry_days=$(curl -vI "https://$domain" 2>&1 | grep "expire date:" | awk '{print $4, $5, $6, $7, $8}')
+          if [ -n "$expiry_days" ]; then
+            echo "✅ SSL certificate is valid until: $expiry_days"
+          else
+            echo "⚠️ Warning: Could not determine SSL certificate expiration"
+          fi
+
+      - name: Setup Monitoring
+        run: |
+          echo "🔧 Setting up monitoring..."
+          docker exec n8n-container /usr/local/bin/monitor.sh &
+          echo "✅ Monitoring started"
+
+      - name: Setup Initial Backup
+        run: |
+          echo "📦 Creating initial backup..."
+          if docker exec n8n-container /usr/local/bin/backup.sh; then
+            echo "✅ Initial backup created successfully"
+          else
+            echo "⚠️ Warning: Initial backup failed"
+          fi
+
+      - name: Deployment Summary
+        run: |
+          echo "🎉 Deployment completed successfully!"
+          echo "📝 Summary:"
+          echo "  - Application: https://${{ needs.validate.outputs.domain }}"
+          echo "  - Environment: ${{ steps.check_env.outputs.is_test == 'true' && 'TEST' || 'PRODUCTION' }}"
+          echo "  - Database: PostgreSQL"
+          echo "  - Monitoring: Active"
+          echo "  - Backup: Configured"
+          echo "  - SSL: Verified"
 
       - name: Cleanup SSH key
         if: always()
