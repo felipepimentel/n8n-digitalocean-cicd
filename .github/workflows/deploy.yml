@@ -125,28 +125,30 @@ jobs:
             exit 1
           fi
           
-          # Verifica o formato do domínio com mais detalhes
-          if [[ ! "$domain" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
+          # Nova expressão regular que suporta múltiplos níveis de domínio
+          if [[ ! "$domain" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
             echo "❌ Error: Invalid domain format"
             echo "Domain should be a valid hostname (e.g., n8n.example.com)"
             echo "Domain should:"
             echo "  - Start with a letter or number"
-            echo "  - Contain only letters, numbers, and hyphens"
+            echo "  - Contain only letters, numbers, dots, and hyphens"
             echo "  - End with a valid TLD"
             echo "  - Not exceed 253 characters"
-            echo "Debug: Domain regex parts:"
-            echo "  1. Start: [[ '$domain' =~ ^[a-zA-Z0-9] ]] = $(if [[ "$domain" =~ ^[a-zA-Z0-9] ]]; then echo "true"; else echo "false"; fi)"
-            echo "  2. Middle: [[ '$domain' =~ [a-zA-Z0-9-]{1,61} ]] = $(if [[ "$domain" =~ [a-zA-Z0-9-]{1,61} ]]; then echo "true"; else echo "false"; fi)"
-            echo "  3. End: [[ '$domain' =~ [a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]] = $(if [[ "$domain" =~ [a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then echo "true"; else echo "false"; fi)"
+            echo "Debug: Domain validation failed for: $domain"
             exit 1
           fi
           
           echo "✅ Domain format is valid: $domain"
           
           # Em produção, verifica se o domínio resolve
-          if [[ "${{ steps.check_env.outputs.is_test }}" != "true" ]] && ! host "$domain" >/dev/null 2>&1; then
-            echo "⚠️ Warning: Domain $domain is not resolvable yet"
-            echo "Make sure to configure DNS after deployment"
+          if [[ "${{ steps.check_env.outputs.is_test }}" != "true" ]]; then
+            echo "Checking DNS resolution..."
+            if ! host "$domain" >/dev/null 2>&1; then
+              echo "⚠️ Warning: Domain $domain is not resolvable yet"
+              echo "Make sure to configure DNS after deployment"
+            else
+              echo "✅ DNS resolution successful for $domain"
+            fi
           fi
 
       - name: Summary
