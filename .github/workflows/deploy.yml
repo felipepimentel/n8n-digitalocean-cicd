@@ -52,18 +52,29 @@ jobs:
             if [ -n "${{ secrets.N8N_ENCRYPTION_KEY }}" ]; then
               echo "key=${{ secrets.N8N_ENCRYPTION_KEY }}" >> $GITHUB_OUTPUT
               echo "🔐 Using configured encryption key"
+              echo "Debug: Key length: ${#N8N_ENCRYPTION_KEY}"
             else
               # Gera uma nova chave hexadecimal de 32 caracteres
               new_key=$(openssl rand -hex 16)
               echo "key=$new_key" >> $GITHUB_OUTPUT
               echo "🔐 Generated new encryption key: $new_key"
+              echo "Debug: Key length: ${#new_key}"
               echo "⚠️ Important: Save this key in your repository secrets for future use!"
             fi
           else
             # Em teste, usa a chave padrão
             echo "key=${{ env.N8N_TEST_ENCRYPTION_KEY }}" >> $GITHUB_OUTPUT
             echo "🔑 Using test encryption key"
+            echo "Debug: Key length: ${#N8N_TEST_ENCRYPTION_KEY}"
           fi
+          
+          # Validação adicional
+          key_value=$(cat $GITHUB_OUTPUT | grep "^key=" | cut -d= -f2)
+          if [ -z "$key_value" ]; then
+            echo "❌ Error: Encryption key is empty"
+            exit 1
+          fi
+          echo "✅ Encryption key validation passed"
 
       - name: Check environment
         id: check_env
@@ -302,6 +313,9 @@ jobs:
         run: |
           echo "🚀 Starting n8n deployment..."
           echo "Using domain: $N8N_DOMAIN"
+          echo "Debug: Checking environment variables..."
+          echo "- N8N_ENCRYPTION_KEY exists: ${{ needs.validate.outputs.encryption_key != '' }}"
+          echo "- N8N_ENCRYPTION_KEY length: ${#N8N_ENCRYPTION_KEY}"
           
           cd ci
           if ! go run main.go; then
@@ -310,6 +324,7 @@ jobs:
             echo "- Domain: $N8N_DOMAIN"
             echo "- DO Token exists: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN != '' }}"
             echo "- SSH Key Fingerprint exists: ${{ secrets.DO_SSH_KEY_FINGERPRINT != '' }}"
+            echo "- Encryption Key exists: ${{ needs.validate.outputs.encryption_key != '' }}"
             exit 1
           fi
           
