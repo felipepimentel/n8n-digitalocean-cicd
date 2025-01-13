@@ -213,28 +213,82 @@ jobs:
       - name: Create SSH key
         id: ssh_setup
         run: |
+          echo "🔑 Setting up SSH key..."
+          
           # Create .ssh directory with correct permissions
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           
+          # Validate if SSH key secret exists
+          if [ -z "${{ secrets.DO_SSH_PRIVATE_KEY }}" ]; then
+            echo "❌ Error: DO_SSH_PRIVATE_KEY secret is not set"
+            echo "Please add your SSH private key as a repository secret"
+            echo "You can generate it using: cat ~/.ssh/n8n_deploy | base64 -w 0"
+            exit 1
+          fi
+          
+          # Validate base64 format and content
+          echo "Validating SSH key format..."
+          KEY_CONTENT=$(echo "${{ secrets.DO_SSH_PRIVATE_KEY }}" | base64 -d 2>/dev/null || true)
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ Error: Invalid base64 format in DO_SSH_PRIVATE_KEY"
+            echo "Make sure you encoded the key correctly using:"
+            echo "cat ~/.ssh/n8n_deploy | base64 -w 0"
+            exit 1
+          fi
+          
+          # Check if the decoded content looks like an SSH key
+          if ! echo "$KEY_CONTENT" | grep -q "BEGIN.*PRIVATE KEY"; then
+            echo "❌ Error: The decoded content doesn't look like an SSH private key"
+            echo "The key should start with '-----BEGIN ... PRIVATE KEY-----'"
+            echo "Please check if you're using the correct key file"
+            exit 1
+          fi
+          
           # Write the SSH private key
-          echo "${{ secrets.DO_SSH_PRIVATE_KEY }}" | base64 -d > ~/.ssh/id_rsa
+          echo "Writing SSH key..."
+          echo "$KEY_CONTENT" > ~/.ssh/id_rsa
+          
+          # Set correct permissions
           chmod 600 ~/.ssh/id_rsa
           
-          # Add known hosts
-          ssh-keyscan -t rsa,ed25519 digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
-          ssh-keyscan -t rsa,ed25519 registry.digitalocean.com >> ~/.ssh/known_hosts 2>/dev/null
+          # Add known hosts with error handling
+          echo "Adding known hosts..."
+          for host in "digitalocean.com" "registry.digitalocean.com"; do
+            if ! ssh-keyscan -t rsa,ed25519 $host >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "⚠️ Warning: Failed to add $host to known_hosts"
+            fi
+          done
           
-          # Set environment variables for ssh-agent
-          eval $(ssh-agent -s)
-          ssh-add ~/.ssh/id_rsa
-          
-          # Test SSH key
-          echo "Testing SSH key format:"
-          ssh-keygen -l -f ~/.ssh/id_rsa || {
-            echo "Error: Invalid SSH key"
+          # Set up ssh-agent
+          echo "Starting ssh-agent..."
+          if ! eval $(ssh-agent -s); then
+            echo "❌ Error: Failed to start ssh-agent"
             exit 1
-          }
+          fi
+          
+          # Add key to ssh-agent with validation
+          echo "Adding key to ssh-agent..."
+          if ! ssh-add ~/.ssh/id_rsa; then
+            echo "❌ Error: Failed to add key to ssh-agent"
+            echo "This usually means the key format is invalid"
+            exit 1
+          fi
+          
+          # Verify SSH key format and print information
+          echo "Verifying SSH key details..."
+          key_info=$(ssh-keygen -l -f ~/.ssh/id_rsa)
+          if [ $? -eq 0 ]; then
+            echo "✅ SSH key information:"
+            echo "$key_info"
+          else
+            echo "❌ Error: Invalid SSH key format"
+            echo "Please make sure you're using a valid SSH private key"
+            exit 1
+          fi
+          
+          echo "✅ SSH key setup completed successfully"
 
       - name: Deploy n8n
         env:
