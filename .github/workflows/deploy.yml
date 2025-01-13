@@ -68,17 +68,22 @@ jobs:
       - name: Check environment
         id: check_env
         run: |
+          echo "Debug: Current branch is ${{ github.ref }}"
+          echo "Debug: N8N_DOMAIN env var is ${{ env.N8N_DOMAIN }}"
+          
           # Determina se é ambiente de teste baseado na branch
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             echo "is_test=false" >> $GITHUB_OUTPUT
             echo "password=${{ secrets.N8N_BASIC_AUTH_PASSWORD }}" >> $GITHUB_OUTPUT
             echo "domain=${{ env.N8N_DOMAIN }}" >> $GITHUB_OUTPUT
+            echo "Debug: Setting domain output to ${{ env.N8N_DOMAIN }} (production)"
             echo "🔒 Production environment detected - using secure password"
             echo "🌐 Using domain: ${{ env.N8N_DOMAIN }}"
           else
             echo "is_test=true" >> $GITHUB_OUTPUT
             echo "password=${{ env.N8N_TEST_PASSWORD }}" >> $GITHUB_OUTPUT
             echo "domain=${{ env.N8N_DOMAIN }}" >> $GITHUB_OUTPUT
+            echo "Debug: Setting domain output to ${{ env.N8N_DOMAIN }} (test)"
             echo "⚠️ Test environment detected - using simple password (teste123)"
             echo "🌐 Using domain: ${{ env.N8N_DOMAIN }}"
           fi
@@ -102,6 +107,9 @@ jobs:
         run: |
           echo "🔍 Testing domain configuration..."
           domain="${{ steps.check_env.outputs.domain }}"
+          echo "Debug: Raw domain value from output: '$domain'"
+          echo "Debug: Domain length: ${#domain}"
+          echo "Debug: Domain characters: $(echo "$domain" | od -c)"
           
           # Verifica se o domínio está vazio
           if [ -z "$domain" ]; then
@@ -117,7 +125,7 @@ jobs:
             exit 1
           fi
           
-          # Verifica o formato do domínio
+          # Verifica o formato do domínio com mais detalhes
           if [[ ! "$domain" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
             echo "❌ Error: Invalid domain format"
             echo "Domain should be a valid hostname (e.g., n8n.example.com)"
@@ -126,6 +134,10 @@ jobs:
             echo "  - Contain only letters, numbers, and hyphens"
             echo "  - End with a valid TLD"
             echo "  - Not exceed 253 characters"
+            echo "Debug: Domain regex parts:"
+            echo "  1. Start: [[ '$domain' =~ ^[a-zA-Z0-9] ]] = $(if [[ "$domain" =~ ^[a-zA-Z0-9] ]]; then echo "true"; else echo "false"; fi)"
+            echo "  2. Middle: [[ '$domain' =~ [a-zA-Z0-9-]{1,61} ]] = $(if [[ "$domain" =~ [a-zA-Z0-9-]{1,61} ]]; then echo "true"; else echo "false"; fi)"
+            echo "  3. End: [[ '$domain' =~ [a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]] = $(if [[ "$domain" =~ [a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then echo "true"; else echo "false"; fi)"
             exit 1
           fi
           
