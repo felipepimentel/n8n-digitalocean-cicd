@@ -65,7 +65,11 @@ jobs:
           fi
           
           # Set the output
-          echo "encryption_key=$N8N_ENCRYPTION_KEY" >> "$GITHUB_OUTPUT"
+          {
+            echo "encryption_key<<EOF"
+            echo "$N8N_ENCRYPTION_KEY"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
           echo "key_set=true" >> "$GITHUB_OUTPUT"
           
           echo "✅ Encryption key setup completed"
@@ -174,54 +178,39 @@ jobs:
     env:
       N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
       N8N_BASIC_AUTH_PASSWORD: ${{ needs.validate.outputs.auth_password }}
-      N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
+      N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
     steps:
-      - name: Setup Encryption Key
-        id: setup_key
-        env:
-          N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Configure Docker
         run: |
-          echo "Debug: Checking encryption key from validate job..."
-          echo "Debug: Available outputs from validate job:"
-          echo "${{ toJSON(needs.validate.outputs) }}"
-          
-          # Check if key was set in validate job
-          if [ "${{ needs.validate.outputs.key_set }}" != "true" ]; then
-            echo "❌ Error: Encryption key was not properly set in validate job"
-            exit 1
-          fi
-          
-          # Validate the key
-          if [ -z "$N8N_ENCRYPTION_KEY" ]; then
-            echo "❌ Error: Encryption key not received from validate job"
-            echo "Debug: validate job outputs: ${{ toJSON(needs.validate.outputs) }}"
-            exit 1
-          fi
-          
-          if [ ${#N8N_ENCRYPTION_KEY} -ne 32 ]; then
-            echo "❌ Error: Invalid encryption key length"
-            echo "Expected: 32 characters"
-            echo "Actual: ${#N8N_ENCRYPTION_KEY} characters"
-            exit 1
-          fi
-          
-          echo "✅ Encryption key setup completed"
-          echo "✅ Key length: ${#N8N_ENCRYPTION_KEY} characters"
-          echo "Debug: Environment variables:"
-          env | grep -i n8n || true
+          doctl registry login --expiry-seconds 600
+          registry_name=$(doctl registry get --format Name --no-header)
+          echo "DOCKER_REGISTRY=registry.digitalocean.com/$registry_name" >> $GITHUB_ENV
 
       - name: Deploy n8n
         env:
           DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
           N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
-          N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
+          N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
           N8N_BASIC_AUTH_USER: ${{ env.N8N_BASIC_AUTH_USER }}
           N8N_BASIC_AUTH_PASS: ${{ needs.validate.outputs.auth_password }}
         run: |
           # Debug: Check environment variables
           echo "Debug: Checking environment variables..."
           echo "- N8N_DOMAIN exists: ${{ needs.validate.outputs.domain != '' }}"
-          echo "- N8N_ENCRYPTION_KEY exists: ${{ secrets.N8N_ENCRYPTION_KEY != '' }}"
+          echo "- N8N_ENCRYPTION_KEY exists: ${{ needs.validate.outputs.encryption_key != '' }}"
           echo "- N8N_BASIC_AUTH_USER exists: ${{ env.N8N_BASIC_AUTH_USER != '' }}"
           echo "- N8N_BASIC_AUTH_PASS exists: ${{ needs.validate.outputs.auth_password != '' }}"
           
