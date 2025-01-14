@@ -47,13 +47,15 @@ jobs:
 
       - name: Generate or Get Encryption Key
         id: encryption_key
+        env:
+          N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
         run: |
           # Debug: Show available secrets
           echo "Debug: Checking N8N_ENCRYPTION_KEY secret..."
-          if [ -n "${{ secrets.N8N_ENCRYPTION_KEY }}" ]; then
+          if [ -n "$N8N_ENCRYPTION_KEY" ]; then
             echo "✅ N8N_ENCRYPTION_KEY secret is set"
             # Use existing key from secrets
-            key_value="${{ secrets.N8N_ENCRYPTION_KEY }}"
+            key_value="$N8N_ENCRYPTION_KEY"
             echo "🔐 Using existing encryption key from secrets"
           else
             echo "⚠️ N8N_ENCRYPTION_KEY secret is not set"
@@ -78,24 +80,15 @@ jobs:
             exit 1
           fi
           
-          # Set the output explicitly using environment file syntax
-          {
-            echo "encryption_key=$key_value"
-            echo "key_length=${#key_value}"
-            echo "key_set=true"
-          } >> "$GITHUB_OUTPUT"
-          
-          # Also set it in the environment for this job
-          {
-            echo "N8N_ENCRYPTION_KEY=$key_value"
-          } >> "$GITHUB_ENV"
+          # Set the output explicitly
+          echo "encryption_key=$key_value" >> "$GITHUB_OUTPUT"
+          echo "key_length=${#key_value}" >> "$GITHUB_OUTPUT"
+          echo "key_set=true" >> "$GITHUB_OUTPUT"
           
           echo "✅ Encryption key validation passed"
           echo "✅ Key length: ${#key_value} characters"
           echo "Debug: Output file contents:"
           cat "$GITHUB_OUTPUT"
-          echo "Debug: Environment variables:"
-          env | grep -i n8n || true
 
       - name: Check environment
         id: check_env
@@ -205,6 +198,8 @@ jobs:
     steps:
       - name: Setup Encryption Key
         id: setup_key
+        env:
+          N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
         run: |
           echo "Debug: Checking encryption key from validate job..."
           echo "Debug: Available outputs from validate job:"
@@ -216,26 +211,10 @@ jobs:
             exit 1
           fi
           
-          # Get the key value from validate job
-          key_value="${{ needs.validate.outputs.encryption_key }}"
-          
-          echo "Debug: Raw encryption key value length: ${#key_value}"
-          
-          if [ -z "$key_value" ]; then
+          # Validate the key
+          if [ -z "$N8N_ENCRYPTION_KEY" ]; then
             echo "❌ Error: Encryption key not received from validate job"
             echo "Debug: validate job outputs: ${{ toJSON(needs.validate.outputs) }}"
-            exit 1
-          fi
-          
-          # Set the encryption key in environment
-          {
-            echo "N8N_ENCRYPTION_KEY=$key_value"
-            echo "key_set=true"
-          } >> "$GITHUB_ENV"
-          
-          # Validate the key after setting
-          if [ -z "$N8N_ENCRYPTION_KEY" ]; then
-            echo "❌ Error: Failed to set N8N_ENCRYPTION_KEY"
             exit 1
           fi
           
