@@ -48,12 +48,10 @@ jobs:
         id: encryption_key
         run: |
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            # Em produção, usa a chave configurada ou gera uma nova
             if [ -n "${{ secrets.N8N_ENCRYPTION_KEY }}" ]; then
               echo "encryption_key=${{ secrets.N8N_ENCRYPTION_KEY }}" >> $GITHUB_OUTPUT
               echo "🔐 Using configured encryption key"
             else
-              # Gera uma nova chave hexadecimal de 32 caracteres
               new_key=$(openssl rand -hex 16)
               echo "encryption_key=$new_key" >> $GITHUB_OUTPUT
               echo "🔐 Generated new encryption key"
@@ -61,13 +59,16 @@ jobs:
               echo "Generated key: $new_key"
             fi
           else
-            # Em teste, usa a chave padrão
             echo "encryption_key=${{ env.N8N_TEST_ENCRYPTION_KEY }}" >> $GITHUB_OUTPUT
             echo "🔑 Using test encryption key"
           fi
           
-          # Validação da chave
+          # Debug output
+          echo "Debug: Setting encryption key output..."
           key_value=$(cat $GITHUB_OUTPUT | grep "^encryption_key=" | cut -d= -f2)
+          echo "Debug: Key length: ${#key_value}"
+          
+          # Validação da chave
           if [ -z "$key_value" ]; then
             echo "❌ Error: Encryption key is empty"
             exit 1
@@ -186,22 +187,31 @@ jobs:
       - name: Setup Encryption Key
         id: setup_key
         run: |
-          echo "Debug: Encryption key from validate job: '${{ needs.validate.outputs.encryption_key }}'"
+          echo "Debug: Checking encryption key from validate job..."
+          echo "Debug: Raw encryption key value: '${{ needs.validate.outputs.encryption_key }}'"
+          echo "Debug: Key length: ${#N8N_ENCRYPTION_KEY}"
           
           if [ -z "${{ needs.validate.outputs.encryption_key }}" ]; then
             echo "❌ Error: Encryption key not received from validate job"
             exit 1
           fi
           
-          # Validar comprimento da chave antes de configurar
-          if [ ${#N8N_ENCRYPTION_KEY} -ne 32 ]; then
-            echo "❌ Error: Invalid encryption key length"
-            echo "Expected: 32 characters"
-            echo "Received: ${#N8N_ENCRYPTION_KEY} characters"
+          # Set the encryption key in environment
+          echo "N8N_ENCRYPTION_KEY=${{ needs.validate.outputs.encryption_key }}" >> $GITHUB_ENV
+          
+          # Validate the key after setting
+          if [ -z "$N8N_ENCRYPTION_KEY" ]; then
+            echo "❌ Error: Failed to set N8N_ENCRYPTION_KEY"
             exit 1
           fi
           
-          echo "N8N_ENCRYPTION_KEY=${{ needs.validate.outputs.encryption_key }}" >> $GITHUB_ENV
+          if [ ${#N8N_ENCRYPTION_KEY} -ne 32 ]; then
+            echo "❌ Error: Invalid encryption key length"
+            echo "Expected: 32 characters"
+            echo "Actual: ${#N8N_ENCRYPTION_KEY} characters"
+            exit 1
+          fi
+          
           echo "✅ Encryption key setup completed"
           echo "Key length: ${#N8N_ENCRYPTION_KEY}"
 
