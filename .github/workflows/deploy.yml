@@ -84,6 +84,7 @@ jobs:
             echo "$key_value"
             echo "EOF"
             echo "key_length=${#key_value}"
+            echo "key_set=true"
           } >> "$GITHUB_OUTPUT"
           
           echo "✅ Encryption key validation passed"
@@ -204,6 +205,12 @@ jobs:
           echo "Debug: Available outputs from validate job:"
           echo "${{ toJSON(needs.validate.outputs) }}"
           
+          # Check if key was set in validate job
+          if [ "${{ needs.validate.outputs.key_set }}" != "true" ]; then
+            echo "❌ Error: Encryption key was not properly set in validate job"
+            exit 1
+          fi
+          
           # Get the key value from validate job
           key_value="${{ needs.validate.outputs.encryption_key }}"
           
@@ -238,6 +245,8 @@ jobs:
           
           echo "✅ Encryption key setup completed"
           echo "✅ Key length: ${#N8N_ENCRYPTION_KEY} characters"
+          echo "Debug: Environment variables:"
+          env | grep -i n8n || true
 
       - name: Deploy n8n
         env:
