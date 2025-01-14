@@ -48,23 +48,34 @@ jobs:
       - name: Generate or Get Encryption Key
         id: encryption_key
         run: |
+          # Debug: Show available secrets
+          echo "Debug: Checking N8N_ENCRYPTION_KEY secret..."
+          if [ -n "${{ secrets.N8N_ENCRYPTION_KEY }}" ]; then
+            echo "✅ N8N_ENCRYPTION_KEY secret is set"
+          else
+            echo "⚠️ N8N_ENCRYPTION_KEY secret is not set"
+          fi
+
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             if [ -n "${{ secrets.N8N_ENCRYPTION_KEY }}" ]; then
+              # Use existing key from secrets
               key_value="${{ secrets.N8N_ENCRYPTION_KEY }}"
-              echo "Using configured encryption key"
+              echo "🔐 Using existing encryption key from secrets"
             else
+              # Generate new key
               key_value=$(openssl rand -hex 16)
+              echo "🔑 Generated new encryption key"
               echo "⚠️ Important: Save this key in your repository secrets!"
               echo "Generated key: $key_value"
             fi
           else
+            # Test environment
             key_value="${{ env.N8N_TEST_ENCRYPTION_KEY }}"
             echo "🔑 Using test encryption key"
           fi
           
           # Debug output
           echo "Debug: Setting encryption key output..."
-          echo "Debug: Key value: $key_value"
           echo "Debug: Key length: ${#key_value}"
           
           # Validate the key
@@ -73,13 +84,18 @@ jobs:
             exit 1
           fi
           if [ ${#key_value} -ne 32 ]; then
-            echo "❌ Error: Encryption key must be 32 characters long"
+            echo "❌ Error: Encryption key must be 32 characters long (current: ${#key_value})"
             exit 1
           fi
           
-          # Set the output using the new syntax
-          echo "encryption_key=$key_value" >> "$GITHUB_OUTPUT"
+          # Set the output explicitly
+          {
+            echo "encryption_key=$key_value"
+            echo "key_length=${#key_value}"
+          } >> "$GITHUB_OUTPUT"
+          
           echo "✅ Encryption key validation passed"
+          echo "✅ Key length: ${#key_value} characters"
 
       - name: Check environment
         id: check_env
@@ -191,9 +207,13 @@ jobs:
         id: setup_key
         run: |
           echo "Debug: Checking encryption key from validate job..."
+          echo "Debug: Available outputs from validate job:"
+          echo "${{ toJSON(needs.validate.outputs) }}"
+          
           key_value="${{ needs.validate.outputs.encryption_key }}"
-          echo "Debug: Raw encryption key value: '$key_value'"
-          echo "Debug: Key length: ${#key_value}"
+          key_length="${{ needs.validate.outputs.key_length }}"
+          
+          echo "Debug: Raw encryption key value length: $key_length"
           
           if [ -z "$key_value" ]; then
             echo "❌ Error: Encryption key not received from validate job"
@@ -202,7 +222,10 @@ jobs:
           fi
           
           # Set the encryption key in environment
-          echo "N8N_ENCRYPTION_KEY=$key_value" >> "$GITHUB_ENV"
+          {
+            echo "N8N_ENCRYPTION_KEY=$key_value"
+            echo "key_set=true"
+          } >> "$GITHUB_ENV"
           
           # Validate the key after setting
           if [ -z "$N8N_ENCRYPTION_KEY" ]; then
@@ -218,7 +241,7 @@ jobs:
           fi
           
           echo "✅ Encryption key setup completed"
-          echo "Key length: ${#N8N_ENCRYPTION_KEY}"
+          echo "✅ Key length: ${#N8N_ENCRYPTION_KEY} characters"
 
       - name: Deploy n8n
         env:
