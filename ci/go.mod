@@ -6,7 +6,7 @@ toolchain go1.23.4
 
 require (
 	dagger.io/dagger v0.9.3
-	github.com/digitalocean/godo v1.132.0
+	github.com/digitalocean/godo v1.133.0
 	golang.org/x/crypto v0.32.0
 )
 
