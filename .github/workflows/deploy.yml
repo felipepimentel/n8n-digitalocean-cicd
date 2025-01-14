@@ -35,6 +35,7 @@ env:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    # Define explicit outputs for the job
     outputs:
       is_test_env: ${{ steps.check_env.outputs.is_test }}
       auth_password: ${{ steps.check_env.outputs.password }}
@@ -50,12 +51,12 @@ jobs:
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             if [ -n "${{ secrets.N8N_ENCRYPTION_KEY }}" ]; then
               key_value="${{ secrets.N8N_ENCRYPTION_KEY }}"
+              echo "Using configured encryption key"
             else
               key_value=$(openssl rand -hex 16)
               echo "⚠️ Important: Save this key in your repository secrets!"
               echo "Generated key: $key_value"
             fi
-            echo "🔐 Using production encryption key"
           else
             key_value="${{ env.N8N_TEST_ENCRYPTION_KEY }}"
             echo "🔑 Using test encryption key"
@@ -63,6 +64,7 @@ jobs:
           
           # Debug output
           echo "Debug: Setting encryption key output..."
+          echo "Debug: Key value: $key_value"
           echo "Debug: Key length: ${#key_value}"
           
           # Validate the key
@@ -75,7 +77,7 @@ jobs:
             exit 1
           fi
           
-          # Set the output
+          # Set the output using the new syntax
           echo "encryption_key=$key_value" >> "$GITHUB_OUTPUT"
           echo "✅ Encryption key validation passed"
 
@@ -183,6 +185,7 @@ jobs:
     env:
       N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
       N8N_BASIC_AUTH_PASSWORD: ${{ needs.validate.outputs.auth_password }}
+      N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
     steps:
       - name: Setup Encryption Key
         id: setup_key
@@ -194,6 +197,7 @@ jobs:
           
           if [ -z "$key_value" ]; then
             echo "❌ Error: Encryption key not received from validate job"
+            echo "Debug: validate job outputs: ${{ toJSON(needs.validate.outputs) }}"
             exit 1
           fi
           
