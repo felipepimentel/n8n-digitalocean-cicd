@@ -50,28 +50,30 @@ jobs:
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             # Em produção, usa a chave configurada ou gera uma nova
             if [ -n "${{ secrets.N8N_ENCRYPTION_KEY }}" ]; then
-              echo "key=${{ secrets.N8N_ENCRYPTION_KEY }}" >> $GITHUB_OUTPUT
+              echo "encryption_key=${{ secrets.N8N_ENCRYPTION_KEY }}" >> $GITHUB_OUTPUT
               echo "🔐 Using configured encryption key"
-              echo "Debug: Key length: ${#N8N_ENCRYPTION_KEY}"
             else
               # Gera uma nova chave hexadecimal de 32 caracteres
               new_key=$(openssl rand -hex 16)
-              echo "key=$new_key" >> $GITHUB_OUTPUT
-              echo "🔐 Generated new encryption key: $new_key"
-              echo "Debug: Key length: ${#new_key}"
-              echo "⚠️ Important: Save this key in your repository secrets for future use!"
+              echo "encryption_key=$new_key" >> $GITHUB_OUTPUT
+              echo "🔐 Generated new encryption key"
+              echo "⚠️ Important: Save this key in your repository secrets!"
+              echo "Generated key: $new_key"
             fi
           else
             # Em teste, usa a chave padrão
-            echo "key=${{ env.N8N_TEST_ENCRYPTION_KEY }}" >> $GITHUB_OUTPUT
+            echo "encryption_key=${{ env.N8N_TEST_ENCRYPTION_KEY }}" >> $GITHUB_OUTPUT
             echo "🔑 Using test encryption key"
-            echo "Debug: Key length: ${#N8N_TEST_ENCRYPTION_KEY}"
           fi
           
-          # Validação adicional
-          key_value=$(cat $GITHUB_OUTPUT | grep "^key=" | cut -d= -f2)
+          # Validação da chave
+          key_value=$(cat $GITHUB_OUTPUT | grep "^encryption_key=" | cut -d= -f2)
           if [ -z "$key_value" ]; then
             echo "❌ Error: Encryption key is empty"
+            exit 1
+          fi
+          if [ ${#key_value} -ne 32 ]; then
+            echo "❌ Error: Encryption key must be 32 characters long"
             exit 1
           fi
           echo "✅ Encryption key validation passed"
@@ -179,127 +181,18 @@ jobs:
     runs-on: ubuntu-latest
     env:
       N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
-      N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
       N8N_BASIC_AUTH_PASSWORD: ${{ needs.validate.outputs.auth_password }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-
-      - name: Install dependencies
+      - name: Setup Encryption Key
+        id: setup_key
         run: |
-          cd ci
-          go mod download
-
-      - name: Install doctl
-        uses: digitalocean/action-doctl@v2
-        with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-
-      - name: Configure Docker for DigitalOcean Registry
-        run: |
-          # Get registry name
-          REGISTRY_NAME=$(doctl registry get --format Name --no-header)
-          if [ -z "$REGISTRY_NAME" ]; then
-            echo "❌ Error: Failed to get registry name"
+          if [ -z "${{ needs.validate.outputs.encryption_key }}" ]; then
+            echo "❌ Error: Encryption key not received from validate job"
             exit 1
           fi
-          
-          # Create Docker config directory if it doesn't exist
-          mkdir -p ~/.docker
-          
-          # Configure Docker authentication for DigitalOcean registry
-          if ! doctl registry login --expiry-seconds 600; then
-            echo "❌ Error: Failed to login to registry"
-            exit 1
-          fi
-          
-          # Verify Docker authentication by trying to pull an image (if it exists)
-          docker pull registry.digitalocean.com/$REGISTRY_NAME/n8n:latest || true
-
-      - name: Create SSH key
-        id: ssh_setup
-        run: |
-          echo "🔑 Setting up SSH key..."
-          
-          # Create .ssh directory with correct permissions
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          
-          # Validate if SSH key secret exists
-          if [ -z "${{ secrets.DO_SSH_PRIVATE_KEY }}" ]; then
-            echo "❌ Error: DO_SSH_PRIVATE_KEY secret is not set"
-            echo "Please add your SSH private key as a repository secret"
-            echo "You can generate it using: cat ~/.ssh/n8n_deploy | base64 -w 0"
-            exit 1
-          fi
-          
-          # Validate base64 format and content
-          echo "Validating SSH key format..."
-          KEY_CONTENT=$(echo "${{ secrets.DO_SSH_PRIVATE_KEY }}" | base64 -d 2>/dev/null || true)
-          
-          if [ $? -ne 0 ]; then
-            echo "❌ Error: Invalid base64 format in DO_SSH_PRIVATE_KEY"
-            echo "Make sure you encoded the key correctly using:"
-            echo "cat ~/.ssh/n8n_deploy | base64 -w 0"
-            exit 1
-          fi
-          
-          # Check if the decoded content looks like an SSH key
-          if ! echo "$KEY_CONTENT" | grep -q "BEGIN.*PRIVATE KEY"; then
-            echo "❌ Error: The decoded content doesn't look like an SSH private key"
-            echo "The key should start with '-----BEGIN ... PRIVATE KEY-----'"
-            echo "Please check if you're using the correct key file"
-            exit 1
-          fi
-          
-          # Write the SSH private key
-          echo "Writing SSH key..."
-          echo "$KEY_CONTENT" > ~/.ssh/id_rsa
-          
-          # Set correct permissions
-          chmod 600 ~/.ssh/id_rsa
-          
-          # Add known hosts with error handling
-          echo "Adding known hosts..."
-          for host in "digitalocean.com" "registry.digitalocean.com"; do
-            if ! ssh-keyscan -t rsa,ed25519 $host >> ~/.ssh/known_hosts 2>/dev/null; then
-              echo "⚠️ Warning: Failed to add $host to known_hosts"
-            fi
-          done
-          
-          # Set up ssh-agent
-          echo "Starting ssh-agent..."
-          if ! eval $(ssh-agent -s); then
-            echo "❌ Error: Failed to start ssh-agent"
-            exit 1
-          fi
-          
-          # Add key to ssh-agent with validation
-          echo "Adding key to ssh-agent..."
-          if ! ssh-add ~/.ssh/id_rsa; then
-            echo "❌ Error: Failed to add key to ssh-agent"
-            echo "This usually means the key format is invalid"
-            exit 1
-          fi
-          
-          # Verify SSH key format and print information
-          echo "Verifying SSH key details..."
-          key_info=$(ssh-keygen -l -f ~/.ssh/id_rsa)
-          if [ $? -eq 0 ]; then
-            echo "✅ SSH key information:"
-            echo "$key_info"
-          else
-            echo "❌ Error: Invalid SSH key format"
-            echo "Please make sure you're using a valid SSH private key"
-            exit 1
-          fi
-          
-          echo "✅ SSH key setup completed successfully"
+          echo "N8N_ENCRYPTION_KEY=${{ needs.validate.outputs.encryption_key }}" >> $GITHUB_ENV
+          echo "✅ Encryption key setup completed"
+          echo "Key length: ${#N8N_ENCRYPTION_KEY}"
 
       - name: Deploy n8n
         env:
@@ -316,6 +209,16 @@ jobs:
           echo "Debug: Checking environment variables..."
           echo "- N8N_ENCRYPTION_KEY exists: ${{ needs.validate.outputs.encryption_key != '' }}"
           echo "- N8N_ENCRYPTION_KEY length: ${#N8N_ENCRYPTION_KEY}"
+          
+          if [ -z "$N8N_ENCRYPTION_KEY" ]; then
+            echo "❌ Error: N8N_ENCRYPTION_KEY is not set"
+            exit 1
+          fi
+          
+          if [ ${#N8N_ENCRYPTION_KEY} -ne 32 ]; then
+            echo "❌ Error: N8N_ENCRYPTION_KEY must be 32 characters long"
+            exit 1
+          fi
           
           cd ci
           if ! go run main.go; then
