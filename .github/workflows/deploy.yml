@@ -65,11 +65,7 @@ jobs:
           fi
           
           # Set the output
-          {
-            echo "encryption_key<<EOF"
-            echo "$N8N_ENCRYPTION_KEY"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          echo "encryption_key=$N8N_ENCRYPTION_KEY" >> "$GITHUB_OUTPUT"
           echo "key_set=true" >> "$GITHUB_OUTPUT"
           
           echo "✅ Encryption key setup completed"
@@ -98,10 +94,12 @@ jobs:
           fi
 
       - name: Validate DigitalOcean Token
+        env:
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
         run: |
           echo "🔍 Testing DigitalOcean API Token..."
           response=$(curl -s -X GET \
-            -H "Authorization: Bearer ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" \
+            -H "Authorization: Bearer $DIGITALOCEAN_ACCESS_TOKEN" \
             "https://api.digitalocean.com/v2/account")
           
           if echo "$response" | jq -e '.account' >/dev/null; then
@@ -176,8 +174,12 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     env:
+      DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      DO_SSH_KEY_FINGERPRINT: ${{ secrets.DO_SSH_KEY_FINGERPRINT }}
+      DO_SSH_PRIVATE_KEY: ${{ secrets.DO_SSH_PRIVATE_KEY }}
       N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
-      N8N_BASIC_AUTH_PASSWORD: ${{ needs.validate.outputs.auth_password }}
+      N8N_BASIC_AUTH_USER: ${{ env.N8N_BASIC_AUTH_USER }}
+      N8N_BASIC_AUTH_PASS: ${{ needs.validate.outputs.auth_password }}
       N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
     steps:
       - name: Checkout code
@@ -200,19 +202,16 @@ jobs:
           echo "DOCKER_REGISTRY=registry.digitalocean.com/$registry_name" >> $GITHUB_ENV
 
       - name: Deploy n8n
-        env:
-          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-          N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
-          N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
-          N8N_BASIC_AUTH_USER: ${{ env.N8N_BASIC_AUTH_USER }}
-          N8N_BASIC_AUTH_PASS: ${{ needs.validate.outputs.auth_password }}
         run: |
           # Debug: Check environment variables
           echo "Debug: Checking environment variables..."
-          echo "- N8N_DOMAIN exists: ${{ needs.validate.outputs.domain != '' }}"
-          echo "- N8N_ENCRYPTION_KEY exists: ${{ needs.validate.outputs.encryption_key != '' }}"
+          echo "- DIGITALOCEAN_ACCESS_TOKEN exists: ${{ env.DIGITALOCEAN_ACCESS_TOKEN != '' }}"
+          echo "- DO_SSH_KEY_FINGERPRINT exists: ${{ env.DO_SSH_KEY_FINGERPRINT != '' }}"
+          echo "- DO_SSH_PRIVATE_KEY exists: ${{ env.DO_SSH_PRIVATE_KEY != '' }}"
+          echo "- N8N_DOMAIN exists: ${{ env.N8N_DOMAIN != '' }}"
+          echo "- N8N_ENCRYPTION_KEY exists: ${{ env.N8N_ENCRYPTION_KEY != '' }}"
           echo "- N8N_BASIC_AUTH_USER exists: ${{ env.N8N_BASIC_AUTH_USER != '' }}"
-          echo "- N8N_BASIC_AUTH_PASS exists: ${{ needs.validate.outputs.auth_password != '' }}"
+          echo "- N8N_BASIC_AUTH_PASS exists: ${{ env.N8N_BASIC_AUTH_PASS != '' }}"
           
           # Deploy n8n
           go run ci/main.go deploy
@@ -220,7 +219,7 @@ jobs:
       - name: Verify Deployment
         run: |
           echo "🔍 Verifying deployment..."
-          domain="${{ needs.validate.outputs.domain }}"
+          domain="${{ env.N8N_DOMAIN }}"
           max_attempts=30
           attempt=1
           
@@ -248,7 +247,7 @@ jobs:
       - name: Verify SSL Certificate
         run: |
           echo "🔍 Verifying SSL certificate..."
-          domain="${{ needs.validate.outputs.domain }}"
+          domain="${{ env.N8N_DOMAIN }}"
           
           # Check SSL certificate
           if ! curl -sI "https://$domain" | grep -i "HTTP/2 200" > /dev/null; then
@@ -283,7 +282,7 @@ jobs:
         run: |
           echo "🎉 Deployment completed successfully!"
           echo "📝 Summary:"
-          echo "  - Application: https://${{ needs.validate.outputs.domain }}"
+          echo "  - Application: https://${{ env.N8N_DOMAIN }}"
           echo "  - Environment: ${{ steps.check_env.outputs.is_test == 'true' && 'TEST' || 'PRODUCTION' }}"
           echo "  - Database: PostgreSQL"
           echo "  - Monitoring: Active"
