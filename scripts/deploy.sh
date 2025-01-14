@@ -12,6 +12,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+GRAY='\033[0;90m'
 NC='\033[0m'
 
 # Function to display messages with timestamp
@@ -25,9 +26,45 @@ log() {
         "SUCCESS") color=$GREEN;;
         "WARNING") color=$YELLOW;;
         "ERROR") color=$RED;;
+        "DEBUG") color=$GRAY;;
     esac
     
     echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ${color}${level}${NC}: $message"
+}
+
+# Function to display error logs with proper formatting
+display_error_logs() {
+    local run_id=$1
+    local temp_log
+    temp_log=$(gh run view "$run_id" --log)
+    local exit_code=$?
+    
+    if [ $exit_code -ne 0 ]; then
+        log "ERROR" "Failed to retrieve logs for run ID: $run_id"
+        return 1
+    fi
+    
+    echo -e "\n${RED}=== Deployment Error Logs ===${NC}"
+    echo -e "${GRAY}----------------------------------------${NC}"
+    
+    # Process and display the logs with proper formatting
+    while IFS= read -r line; do
+        # Highlight error messages
+        if [[ $line == *"error"* ]] || [[ $line == *"Error"* ]] || [[ $line == *"ERROR"* ]] || [[ $line == *"failed"* ]] || [[ $line == *"Failed"* ]]; then
+            echo -e "${RED}$line${NC}"
+        # Highlight warning messages
+        elif [[ $line == *"warning"* ]] || [[ $line == *"Warning"* ]] || [[ $line == *"WARN"* ]]; then
+            echo -e "${YELLOW}$line${NC}"
+        # Highlight success messages
+        elif [[ $line == *"success"* ]] || [[ $line == *"Success"* ]] || [[ $line == *"succeeded"* ]]; then
+            echo -e "${GREEN}$line${NC}"
+        else
+            echo -e "${GRAY}$line${NC}"
+        fi
+    done <<< "$temp_log"
+    
+    echo -e "${GRAY}----------------------------------------${NC}"
+    echo -e "${RED}=== End of Error Logs ===${NC}\n"
 }
 
 # Function to check dependencies
@@ -87,6 +124,7 @@ monitor_workflow() {
     
     local start_time=$(date +%s)
     local timeout=1800  # 30 minutes timeout
+    local last_status=""
     
     while true; do
         # Check timeout
@@ -111,29 +149,31 @@ monitor_workflow() {
         local status=$(echo "$status_output" | cut -f1)
         local conclusion=$(echo "$status_output" | cut -f2)
         
-        case "$status" in
-            "completed")
-                if [ "$conclusion" = "success" ]; then
-                    log "SUCCESS" "Deployment completed successfully!"
-                    return 0
-                else
-                    log "ERROR" "Deployment failed. Retrieving logs..."
-                    local log_file="deploy-${run_id}.log"
-                    gh run view "$run_id" --log > "$log_file"
-                    log "INFO" "Logs saved to: $log_file"
-                    return 1
-                fi
-                ;;
-            "in_progress")
-                log "INFO" "Deployment in progress..."
-                ;;
-            "queued")
-                log "INFO" "Deployment queued..."
-                ;;
-            *)
-                log "WARNING" "Unknown status: $status"
-                ;;
-        esac
+        # Only log status changes
+        if [ "$status" != "$last_status" ]; then
+            case "$status" in
+                "completed")
+                    if [ "$conclusion" = "success" ]; then
+                        log "SUCCESS" "Deployment completed successfully!"
+                        return 0
+                    else
+                        log "ERROR" "Deployment failed. Displaying logs..."
+                        display_error_logs "$run_id"
+                        return 1
+                    fi
+                    ;;
+                "in_progress")
+                    log "INFO" "Deployment in progress..."
+                    ;;
+                "queued")
+                    log "INFO" "Deployment queued..."
+                    ;;
+                *)
+                    log "WARNING" "Unknown status: $status"
+                    ;;
+            esac
+            last_status="$status"
+        fi
         
         sleep $RETRY_INTERVAL
     done
