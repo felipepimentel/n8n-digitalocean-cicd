@@ -78,9 +78,11 @@ jobs:
             exit 1
           fi
           
-          # Set the output explicitly
+          # Set the output explicitly using multi-line output syntax
           {
-            echo "encryption_key=$key_value"
+            echo "encryption_key<<EOF"
+            echo "$key_value"
+            echo "EOF"
             echo "key_length=${#key_value}"
           } >> "$GITHUB_OUTPUT"
           
@@ -202,10 +204,10 @@ jobs:
           echo "Debug: Available outputs from validate job:"
           echo "${{ toJSON(needs.validate.outputs) }}"
           
+          # Get the key value from validate job
           key_value="${{ needs.validate.outputs.encryption_key }}"
-          key_length="${{ needs.validate.outputs.key_length }}"
           
-          echo "Debug: Raw encryption key value length: $key_length"
+          echo "Debug: Raw encryption key value length: ${#key_value}"
           
           if [ -z "$key_value" ]; then
             echo "❌ Error: Encryption key not received from validate job"
@@ -213,9 +215,11 @@ jobs:
             exit 1
           fi
           
-          # Set the encryption key in environment
+          # Set the encryption key in environment using multi-line syntax
           {
-            echo "N8N_ENCRYPTION_KEY=$key_value"
+            echo "N8N_ENCRYPTION_KEY<<EOF"
+            echo "$key_value"
+            echo "EOF"
             echo "key_set=true"
           } >> "$GITHUB_ENV"
           
