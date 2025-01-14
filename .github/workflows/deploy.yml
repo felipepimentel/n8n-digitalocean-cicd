@@ -93,7 +93,6 @@ jobs:
     name: Deploy n8n
     needs: validate
     runs-on: ubuntu-latest
-    environment: production
 
     steps:
       - name: Check out code
