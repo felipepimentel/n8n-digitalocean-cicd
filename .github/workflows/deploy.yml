@@ -217,6 +217,13 @@ jobs:
           echo "- N8N_BASIC_AUTH_USER exists: true"
           echo "- N8N_BASIC_AUTH_PASS exists: ${{ needs.validate.outputs.auth_password != '' }}"
           
+          # Debug: Print environment variables
+          echo "Debug: Environment variables values..."
+          echo "- N8N_DOMAIN: $N8N_DOMAIN"
+          echo "- N8N_BASIC_AUTH_USER: $N8N_BASIC_AUTH_USER"
+          echo "- N8N_BASIC_AUTH_PASS: [REDACTED]"
+          echo "- N8N_ENCRYPTION_KEY: [REDACTED]"
+          
           # Deploy n8n
           go run ci/main.go deploy
 
