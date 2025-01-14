@@ -178,7 +178,7 @@ jobs:
       DO_SSH_KEY_FINGERPRINT: ${{ secrets.DO_SSH_KEY_FINGERPRINT }}
       DO_SSH_PRIVATE_KEY: ${{ secrets.DO_SSH_PRIVATE_KEY }}
       N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
-      N8N_BASIC_AUTH_USER: ${{ env.N8N_BASIC_AUTH_USER }}
+      N8N_BASIC_AUTH_USER: admin
       N8N_BASIC_AUTH_PASS: ${{ needs.validate.outputs.auth_password }}
       N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
     steps:
@@ -199,19 +199,23 @@ jobs:
         run: |
           doctl registry login --expiry-seconds 600
           registry_name=$(doctl registry get --format Name --no-header)
+          if [ -z "$registry_name" ]; then
+            echo "❌ Error: Failed to get registry name"
+            exit 1
+          fi
           echo "DOCKER_REGISTRY=registry.digitalocean.com/$registry_name" >> $GITHUB_ENV
 
       - name: Deploy n8n
         run: |
           # Debug: Check environment variables
           echo "Debug: Checking environment variables..."
-          echo "- DIGITALOCEAN_ACCESS_TOKEN exists: ${{ env.DIGITALOCEAN_ACCESS_TOKEN != '' }}"
-          echo "- DO_SSH_KEY_FINGERPRINT exists: ${{ env.DO_SSH_KEY_FINGERPRINT != '' }}"
-          echo "- DO_SSH_PRIVATE_KEY exists: ${{ env.DO_SSH_PRIVATE_KEY != '' }}"
-          echo "- N8N_DOMAIN exists: ${{ env.N8N_DOMAIN != '' }}"
-          echo "- N8N_ENCRYPTION_KEY exists: ${{ env.N8N_ENCRYPTION_KEY != '' }}"
-          echo "- N8N_BASIC_AUTH_USER exists: ${{ env.N8N_BASIC_AUTH_USER != '' }}"
-          echo "- N8N_BASIC_AUTH_PASS exists: ${{ env.N8N_BASIC_AUTH_PASS != '' }}"
+          echo "- DIGITALOCEAN_ACCESS_TOKEN exists: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN != '' }}"
+          echo "- DO_SSH_KEY_FINGERPRINT exists: ${{ secrets.DO_SSH_KEY_FINGERPRINT != '' }}"
+          echo "- DO_SSH_PRIVATE_KEY exists: ${{ secrets.DO_SSH_PRIVATE_KEY != '' }}"
+          echo "- N8N_DOMAIN exists: ${{ needs.validate.outputs.domain != '' }}"
+          echo "- N8N_ENCRYPTION_KEY exists: ${{ needs.validate.outputs.encryption_key != '' }}"
+          echo "- N8N_BASIC_AUTH_USER exists: true"
+          echo "- N8N_BASIC_AUTH_PASS exists: ${{ needs.validate.outputs.auth_password != '' }}"
           
           # Deploy n8n
           go run ci/main.go deploy
