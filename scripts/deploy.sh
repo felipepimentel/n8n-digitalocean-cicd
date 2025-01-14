@@ -28,7 +28,7 @@ check_dependencies() {
     if ! gh auth status &> /dev/null; then
         log "${RED}❌ GitHub CLI não está autenticado. Execute 'gh auth login' primeiro.${NC}"
         exit 1
-    }
+    fi
     
     log "${GREEN}✅ Todas as dependências verificadas.${NC}"
 }
@@ -58,7 +58,7 @@ monitor_workflow() {
         if [ -z "$RUN_ID" ]; then
             log "${RED}❌ Não foi possível obter o ID da execução.${NC}"
             exit 1
-        }
+        fi
         
         # Obter status da execução
         STATUS=$(gh run list --workflow="$WORKFLOW_FILE" --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"')
