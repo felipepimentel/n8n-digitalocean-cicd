@@ -219,8 +219,8 @@ jobs:
           
           # Debug: Print environment variables
           echo "Debug: Environment variables values..."
-          echo "- N8N_DOMAIN: $N8N_DOMAIN"
-          echo "- N8N_BASIC_AUTH_USER: $N8N_BASIC_AUTH_USER"
+          echo "- N8N_DOMAIN: ${{ needs.validate.outputs.domain }}"
+          echo "- N8N_BASIC_AUTH_USER: admin"
           echo "- N8N_BASIC_AUTH_PASS: [REDACTED]"
           echo "- N8N_ENCRYPTION_KEY: [REDACTED]"
           
