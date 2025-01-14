@@ -54,39 +54,21 @@ jobs:
           echo "Debug: Checking N8N_ENCRYPTION_KEY secret..."
           if [ -n "$N8N_ENCRYPTION_KEY" ]; then
             echo "✅ N8N_ENCRYPTION_KEY secret is set"
-            # Use existing key from secrets
-            key_value="$N8N_ENCRYPTION_KEY"
+            echo "encryption_key=$N8N_ENCRYPTION_KEY" >> "$GITHUB_OUTPUT"
+            echo "key_set=true" >> "$GITHUB_OUTPUT"
             echo "🔐 Using existing encryption key from secrets"
           else
             echo "⚠️ N8N_ENCRYPTION_KEY secret is not set"
             # Generate new key
             key_value=$(openssl rand -hex 16)
+            echo "encryption_key=$key_value" >> "$GITHUB_OUTPUT"
+            echo "key_set=true" >> "$GITHUB_OUTPUT"
             echo "🔑 Generated new encryption key"
             echo "⚠️ Important: Save this key in your repository secrets!"
             echo "Generated key: $key_value"
           fi
           
           # Debug output
-          echo "Debug: Setting encryption key output..."
-          echo "Debug: Key length: ${#key_value}"
-          
-          # Validate the key
-          if [ -z "$key_value" ]; then
-            echo "❌ Error: Encryption key is empty"
-            exit 1
-          fi
-          if [ ${#key_value} -ne 32 ]; then
-            echo "❌ Error: Encryption key must be 32 characters long (current: ${#key_value})"
-            exit 1
-          fi
-          
-          # Set the output explicitly
-          echo "encryption_key=$key_value" >> "$GITHUB_OUTPUT"
-          echo "key_length=${#key_value}" >> "$GITHUB_OUTPUT"
-          echo "key_set=true" >> "$GITHUB_OUTPUT"
-          
-          echo "✅ Encryption key validation passed"
-          echo "✅ Key length: ${#key_value} characters"
           echo "Debug: Output file contents:"
           cat "$GITHUB_OUTPUT"
 
@@ -194,12 +176,12 @@ jobs:
     env:
       N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
       N8N_BASIC_AUTH_PASSWORD: ${{ needs.validate.outputs.auth_password }}
-      N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
+      N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
     steps:
       - name: Setup Encryption Key
         id: setup_key
         env:
-          N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
+          N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
         run: |
           echo "Debug: Checking encryption key from validate job..."
           echo "Debug: Available outputs from validate job:"
@@ -234,30 +216,16 @@ jobs:
         env:
           DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
           N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
-          N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
+          N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
           N8N_BASIC_AUTH_USER: ${{ env.N8N_BASIC_AUTH_USER }}
           N8N_BASIC_AUTH_PASS: ${{ needs.validate.outputs.auth_password }}
         run: |
           # Debug: Check environment variables
           echo "Debug: Checking environment variables..."
           echo "- N8N_DOMAIN exists: ${{ needs.validate.outputs.domain != '' }}"
-          echo "- N8N_ENCRYPTION_KEY exists: ${{ needs.validate.outputs.encryption_key != '' }}"
+          echo "- N8N_ENCRYPTION_KEY exists: ${{ secrets.N8N_ENCRYPTION_KEY != '' }}"
           echo "- N8N_BASIC_AUTH_USER exists: ${{ env.N8N_BASIC_AUTH_USER != '' }}"
           echo "- N8N_BASIC_AUTH_PASS exists: ${{ needs.validate.outputs.auth_password != '' }}"
-          
-          # Validate encryption key
-          if [ -z "$N8N_ENCRYPTION_KEY" ]; then
-            echo "❌ Error: Encryption key not received from validate job"
-            exit 1
-          fi
-          
-          echo "Debug: Encryption key length: ${#N8N_ENCRYPTION_KEY}"
-          if [ ${#N8N_ENCRYPTION_KEY} -ne 32 ]; then
-            echo "❌ Error: Invalid encryption key length (expected 32, got ${#N8N_ENCRYPTION_KEY})"
-            exit 1
-          fi
-          
-          echo "✅ Encryption key validation passed"
           
           # Deploy n8n
           go run ci/main.go deploy
