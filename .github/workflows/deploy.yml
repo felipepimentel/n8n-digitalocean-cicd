@@ -52,26 +52,16 @@ jobs:
           echo "Debug: Checking N8N_ENCRYPTION_KEY secret..."
           if [ -n "${{ secrets.N8N_ENCRYPTION_KEY }}" ]; then
             echo "✅ N8N_ENCRYPTION_KEY secret is set"
+            # Use existing key from secrets
+            key_value="${{ secrets.N8N_ENCRYPTION_KEY }}"
+            echo "🔐 Using existing encryption key from secrets"
           else
             echo "⚠️ N8N_ENCRYPTION_KEY secret is not set"
-          fi
-
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            if [ -n "${{ secrets.N8N_ENCRYPTION_KEY }}" ]; then
-              # Use existing key from secrets
-              key_value="${{ secrets.N8N_ENCRYPTION_KEY }}"
-              echo "🔐 Using existing encryption key from secrets"
-            else
-              # Generate new key
-              key_value=$(openssl rand -hex 16)
-              echo "🔑 Generated new encryption key"
-              echo "⚠️ Important: Save this key in your repository secrets!"
-              echo "Generated key: $key_value"
-            fi
-          else
-            # Test environment
-            key_value="${{ env.N8N_TEST_ENCRYPTION_KEY }}"
-            echo "🔑 Using test encryption key"
+            # Generate new key
+            key_value=$(openssl rand -hex 16)
+            echo "🔑 Generated new encryption key"
+            echo "⚠️ Important: Save this key in your repository secrets!"
+            echo "Generated key: $key_value"
           fi
           
           # Debug output
@@ -96,6 +86,8 @@ jobs:
           
           echo "✅ Encryption key validation passed"
           echo "✅ Key length: ${#key_value} characters"
+          echo "Debug: Output file contents:"
+          cat "$GITHUB_OUTPUT"
 
       - name: Check environment
         id: check_env
@@ -246,44 +238,34 @@ jobs:
       - name: Deploy n8n
         env:
           DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-          DO_SSH_KEY_FINGERPRINT: ${{ secrets.DO_SSH_KEY_FINGERPRINT }}
-          DO_SSH_KEY_ID: ${{ secrets.DO_SSH_KEY_ID }}
           N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
           N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
           N8N_BASIC_AUTH_USER: ${{ env.N8N_BASIC_AUTH_USER }}
           N8N_BASIC_AUTH_PASS: ${{ needs.validate.outputs.auth_password }}
         run: |
-          echo "🚀 Starting n8n deployment..."
-          echo "Using domain: $N8N_DOMAIN"
+          # Debug: Check environment variables
           echo "Debug: Checking environment variables..."
+          echo "- N8N_DOMAIN exists: ${{ needs.validate.outputs.domain != '' }}"
           echo "- N8N_ENCRYPTION_KEY exists: ${{ needs.validate.outputs.encryption_key != '' }}"
-          echo "- N8N_ENCRYPTION_KEY length: ${#N8N_ENCRYPTION_KEY}"
+          echo "- N8N_BASIC_AUTH_USER exists: ${{ env.N8N_BASIC_AUTH_USER != '' }}"
+          echo "- N8N_BASIC_AUTH_PASS exists: ${{ needs.validate.outputs.auth_password != '' }}"
           
+          # Validate encryption key
           if [ -z "$N8N_ENCRYPTION_KEY" ]; then
-            echo "❌ Error: N8N_ENCRYPTION_KEY is not set"
-            echo "Debug: Raw value: '$N8N_ENCRYPTION_KEY'"
+            echo "❌ Error: Encryption key not received from validate job"
             exit 1
           fi
           
+          echo "Debug: Encryption key length: ${#N8N_ENCRYPTION_KEY}"
           if [ ${#N8N_ENCRYPTION_KEY} -ne 32 ]; then
-            echo "❌ Error: N8N_ENCRYPTION_KEY must be 32 characters long"
-            echo "Current length: ${#N8N_ENCRYPTION_KEY}"
+            echo "❌ Error: Invalid encryption key length (expected 32, got ${#N8N_ENCRYPTION_KEY})"
             exit 1
           fi
           
-          cd ci
-          if ! go run main.go; then
-            echo "❌ Error: Failed to deploy n8n"
-            echo "Debug information:"
-            echo "- Domain: $N8N_DOMAIN"
-            echo "- DO Token exists: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN != '' }}"
-            echo "- SSH Key Fingerprint exists: ${{ secrets.DO_SSH_KEY_FINGERPRINT != '' }}"
-            echo "- Encryption Key exists: ${{ needs.validate.outputs.encryption_key != '' }}"
-            echo "- Encryption Key length: ${#N8N_ENCRYPTION_KEY}"
-            exit 1
-          fi
+          echo "✅ Encryption key validation passed"
           
-          echo "✅ n8n deployment completed successfully"
+          # Deploy n8n
+          go run ci/main.go deploy
 
       - name: Verify Deployment
         run: |
