@@ -2,191 +2,105 @@ name: Deploy n8n (GitHub Actions)
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
   pull_request:
-    branches: ["main"]
+    branches: [ "main" ]
   release:
     types: [published]
   workflow_dispatch:
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
   issues: write
-  pull-requests: write
-  packages: write
-  statuses: write
-  actions: read
+  actions: write
 
 env:
-  ACTIONS_RUNNER_DEBUG: true
-  ACTIONS_STEP_DEBUG: true
   DOCKER_REGISTRY: registry.digitalocean.com
-  DROPLET_NAME: n8n-server
-  N8N_VERSION: latest
+  DROPLET_NAME: n8n
+  N8N_VERSION: 1.24.1
   N8N_BASIC_AUTH_USER: admin
-  # Senha simples para ambiente de teste (usuário: admin, senha: teste123)
-  N8N_TEST_PASSWORD: "teste123"
-  # Chave de criptografia padrão para ambiente de teste
-  N8N_TEST_ENCRYPTION_KEY: "12345678901234567890123456789012"
-  # Domínio padrão
-  N8N_DOMAIN: "n8n.pepper88.com"
+  N8N_TEST_PASSWORD: ${{ secrets.N8N_TEST_PASSWORD }}
+  N8N_TEST_ENCRYPTION_KEY: ${{ secrets.N8N_TEST_ENCRYPTION_KEY }}
+  N8N_DOMAIN: n8n.pepper88.com
 
 jobs:
   validate:
+    name: Validate environment
     runs-on: ubuntu-latest
-    # Define explicit outputs for the job
     outputs:
-      is_test_env: ${{ steps.check_env.outputs.is_test }}
-      auth_password: ${{ steps.check_env.outputs.password }}
-      encryption_key: ${{ steps.encryption_key.outputs.encryption_key }}
-      domain: ${{ steps.check_env.outputs.domain }}
+      domain: ${{ env.N8N_DOMAIN }}
+      encryption_key: ${{ steps.setup_key.outputs.encryption_key }}
+      auth_password: ${{ steps.setup_password.outputs.auth_password }}
+
     steps:
-      - name: Checkout code
+      - name: Check out code
         uses: actions/checkout@v4
 
-      - name: Generate or Get Encryption Key
-        id: encryption_key
-        env:
-          N8N_ENCRYPTION_KEY: ${{ secrets.N8N_ENCRYPTION_KEY }}
+      - name: Setup encryption key
+        id: setup_key
         run: |
-          # Debug: Show available secrets
-          echo "Debug: Checking N8N_ENCRYPTION_KEY secret..."
-          if [ -n "$N8N_ENCRYPTION_KEY" ]; then
-            echo "✅ N8N_ENCRYPTION_KEY secret is set"
-            echo "🔐 Using existing encryption key from secrets"
+          if [ -n "${{ secrets.N8N_ENCRYPTION_KEY }}" ]; then
+            echo "Using existing encryption key"
+            echo "encryption_key=${{ secrets.N8N_ENCRYPTION_KEY }}" >> $GITHUB_OUTPUT
           else
-            echo "⚠️ N8N_ENCRYPTION_KEY secret is not set"
-            # Generate new key
-            N8N_ENCRYPTION_KEY=$(openssl rand -hex 16)
-            echo "🔑 Generated new encryption key"
-            echo "⚠️ Important: Save this key in your repository secrets!"
-            echo "Generated key: $N8N_ENCRYPTION_KEY"
-          fi
-          
-          # Set the output
-          echo "encryption_key=$N8N_ENCRYPTION_KEY" >> "$GITHUB_OUTPUT"
-          echo "key_set=true" >> "$GITHUB_OUTPUT"
-          
-          echo "✅ Encryption key setup completed"
-
-      - name: Check environment
-        id: check_env
-        run: |
-          echo "Debug: Current branch is ${{ github.ref }}"
-          echo "Debug: N8N_DOMAIN env var is ${{ env.N8N_DOMAIN }}"
-          
-          # Determina se é ambiente de teste baseado na branch
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "is_test=false" >> $GITHUB_OUTPUT
-            echo "password=${{ secrets.N8N_BASIC_AUTH_PASSWORD }}" >> $GITHUB_OUTPUT
-            echo "domain=${{ env.N8N_DOMAIN }}" >> $GITHUB_OUTPUT
-            echo "Debug: Setting domain output to ${{ env.N8N_DOMAIN }} (production)"
-            echo "🔒 Production environment detected - using secure password"
-            echo "🌐 Using domain: ${{ env.N8N_DOMAIN }}"
-          else
-            echo "is_test=true" >> $GITHUB_OUTPUT
-            echo "password=${{ env.N8N_TEST_PASSWORD }}" >> $GITHUB_OUTPUT
-            echo "domain=${{ env.N8N_DOMAIN }}" >> $GITHUB_OUTPUT
-            echo "Debug: Setting domain output to ${{ env.N8N_DOMAIN }} (test)"
-            echo "⚠️ Test environment detected - using simple password (teste123)"
-            echo "🌐 Using domain: ${{ env.N8N_DOMAIN }}"
+            echo "Generating new encryption key"
+            key_value=$(openssl rand -hex 16)
+            echo "encryption_key=$key_value" >> $GITHUB_OUTPUT
           fi
 
-      - name: Validate DigitalOcean Token
-        env:
-          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - name: Setup password
+        id: setup_password
         run: |
-          echo "🔍 Testing DigitalOcean API Token..."
-          response=$(curl -s -X GET \
-            -H "Authorization: Bearer $DIGITALOCEAN_ACCESS_TOKEN" \
-            "https://api.digitalocean.com/v2/account")
-          
-          if echo "$response" | jq -e '.account' >/dev/null; then
-            echo "✅ DigitalOcean API Token is valid"
+          if [ -n "${{ secrets.N8N_BASIC_AUTH_PASS }}" ]; then
+            echo "Using existing password"
+            echo "auth_password=${{ secrets.N8N_BASIC_AUTH_PASS }}" >> $GITHUB_OUTPUT
           else
-            echo "❌ Error: Invalid DigitalOcean API Token"
-            echo "Response: $response"
-            exit 1
+            echo "Using test password"
+            echo "auth_password=${{ env.N8N_TEST_PASSWORD }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Validate Domain
+      - name: Validate DigitalOcean token
         run: |
-          echo "🔍 Testing domain configuration..."
-          domain="${{ steps.check_env.outputs.domain }}"
-          echo "Debug: Raw domain value from output: '$domain'"
-          echo "Debug: Domain length: ${#domain}"
-          echo "Debug: Domain characters: $(echo "$domain" | od -c)"
-          
-          # Verifica se o domínio está vazio
-          if [ -z "$domain" ]; then
-            echo "❌ Error: Domain is empty"
-            echo "Check if N8N_DOMAIN is set correctly"
+          if [ -z "${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}" ]; then
+            echo "❌ Error: DIGITALOCEAN_ACCESS_TOKEN is required"
             exit 1
           fi
-          
-          # Verifica o comprimento do domínio
-          if [ ${#domain} -lt 4 ] || [ ${#domain} -gt 253 ]; then
-            echo "❌ Error: Invalid domain length: ${#domain} characters"
-            echo "Domain length should be between 4 and 253 characters"
-            exit 1
-          fi
-          
-          # Nova expressão regular que suporta múltiplos níveis de domínio
+          echo "✅ DigitalOcean token is set"
+
+      - name: Validate domain
+        run: |
+          domain="${{ env.N8N_DOMAIN }}"
           if [[ ! "$domain" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
-            echo "❌ Error: Invalid domain format"
-            echo "Domain should be a valid hostname (e.g., n8n.example.com)"
+            echo "❌ Error: Invalid domain format: $domain"
             echo "Domain should:"
-            echo "  - Start with a letter or number"
-            echo "  - Contain only letters, numbers, dots, and hyphens"
-            echo "  - End with a valid TLD"
-            echo "  - Not exceed 253 characters"
-            echo "Debug: Domain validation failed for: $domain"
+            echo "- Start with a letter or number"
+            echo "- Contain only letters, numbers, dots, and hyphens"
+            echo "- End with a valid TLD"
+            echo "- Not exceed 253 characters"
             exit 1
           fi
-          
           echo "✅ Domain format is valid: $domain"
-          
-          # Em produção, verifica se o domínio resolve
-          if [[ "${{ steps.check_env.outputs.is_test }}" != "true" ]]; then
-            echo "Checking DNS resolution..."
-            if ! host "$domain" >/dev/null 2>&1; then
-              echo "⚠️ Warning: Domain $domain is not resolvable yet"
-              echo "Make sure to configure DNS after deployment"
-            else
-              echo "✅ DNS resolution successful for $domain"
-            fi
-          fi
 
-      - name: Summary
+      - name: Summary of validations
         run: |
-          echo "🎉 All validations passed!"
-          echo "Environment: ${{ steps.check_env.outputs.is_test == 'true' && 'TEST' || 'PRODUCTION' }}"
-          if [ "${{ steps.check_env.outputs.is_test }}" == "true" ]; then
-            echo "⚠️ Using test credentials:"
-            echo "  - Username: admin"
-            echo "  - Password: teste123"
-            echo "  - Domain: ${{ env.N8N_DOMAIN }}"
-            echo "  - Encryption Key: ${{ env.N8N_TEST_ENCRYPTION_KEY }}"
-          fi
+          echo "✅ Environment validation completed successfully"
+          echo "Environment: production"
+          echo "Domain: ${{ env.N8N_DOMAIN }}"
+          echo "Registry: ${{ env.DOCKER_REGISTRY }}"
+          echo "N8N Version: ${{ env.N8N_VERSION }}"
 
   deploy:
+    name: Deploy n8n
     needs: validate
     runs-on: ubuntu-latest
-    env:
-      DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-      DO_SSH_KEY_FINGERPRINT: ${{ secrets.DO_SSH_KEY_FINGERPRINT }}
-      DO_SSH_PRIVATE_KEY: ${{ secrets.DO_SSH_PRIVATE_KEY }}
-      N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
-      N8N_BASIC_AUTH_USER: admin
-      N8N_BASIC_AUTH_PASS: ${{ needs.validate.outputs.auth_password }}
-      N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
+    environment: production
+
     steps:
-      - name: Checkout code
+      - name: Check out code
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Set up Go
+        uses: actions/setup-go@v4
         with:
           go-version: '1.21'
 
@@ -197,110 +111,21 @@ jobs:
 
       - name: Configure Docker
         run: |
-          doctl registry login --expiry-seconds 600
           registry_name=$(doctl registry get --format Name --no-header)
           if [ -z "$registry_name" ]; then
             echo "❌ Error: Failed to get registry name"
             exit 1
           fi
-          echo "DOCKER_REGISTRY=registry.digitalocean.com/$registry_name" >> $GITHUB_ENV
+          doctl registry login
 
       - name: Deploy n8n
+        working-directory: ci
+        env:
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          N8N_DOMAIN: ${{ needs.validate.outputs.domain }}
+          N8N_ENCRYPTION_KEY: ${{ needs.validate.outputs.encryption_key }}
+          N8N_BASIC_AUTH_USER: admin
+          N8N_BASIC_AUTH_PASS: ${{ needs.validate.outputs.auth_password }}
         run: |
-          # Debug: Check environment variables
-          echo "Debug: Checking environment variables..."
-          echo "- DIGITALOCEAN_ACCESS_TOKEN exists: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN != '' }}"
-          echo "- DO_SSH_KEY_FINGERPRINT exists: ${{ secrets.DO_SSH_KEY_FINGERPRINT != '' }}"
-          echo "- DO_SSH_PRIVATE_KEY exists: ${{ secrets.DO_SSH_PRIVATE_KEY != '' }}"
-          echo "- N8N_DOMAIN exists: ${{ needs.validate.outputs.domain != '' }}"
-          echo "- N8N_ENCRYPTION_KEY exists: ${{ needs.validate.outputs.encryption_key != '' }}"
-          echo "- N8N_BASIC_AUTH_USER exists: true"
-          echo "- N8N_BASIC_AUTH_PASS exists: ${{ needs.validate.outputs.auth_password != '' }}"
-          
-          # Debug: Print environment variables
-          echo "Debug: Environment variables values..."
-          echo "- N8N_DOMAIN: ${{ needs.validate.outputs.domain }}"
-          echo "- N8N_BASIC_AUTH_USER: admin"
-          echo "- N8N_BASIC_AUTH_PASS: [REDACTED]"
-          echo "- N8N_ENCRYPTION_KEY: [REDACTED]"
-          
-          # Deploy n8n
-          go run ci/main.go deploy
-
-      - name: Verify Deployment
-        run: |
-          echo "🔍 Verifying deployment..."
-          domain="${{ env.N8N_DOMAIN }}"
-          max_attempts=30
-          attempt=1
-          
-          while ! curl -sf "https://$domain/healthz" > /dev/null; do
-            if [ $attempt -ge $max_attempts ]; then
-              echo "❌ Error: n8n health check failed after 5 minutes"
-              exit 1
-            fi
-            echo "Waiting for n8n to be ready... attempt $attempt/$max_attempts"
-            sleep 10
-            ((attempt++))
-          done
-          
-          echo "✅ n8n is up and running at https://$domain"
-
-      - name: Verify Database
-        run: |
-          echo "🔍 Verifying database connection..."
-          if ! docker exec n8n-db pg_isready -U n8n; then
-            echo "❌ Error: Database connection failed"
-            exit 1
-          fi
-          echo "✅ Database connection verified"
-
-      - name: Verify SSL Certificate
-        run: |
-          echo "🔍 Verifying SSL certificate..."
-          domain="${{ env.N8N_DOMAIN }}"
-          
-          # Check SSL certificate
-          if ! curl -sI "https://$domain" | grep -i "HTTP/2 200" > /dev/null; then
-            echo "❌ Error: SSL certificate verification failed"
-            exit 1
-          fi
-          
-          # Check certificate expiration
-          expiry_days=$(curl -vI "https://$domain" 2>&1 | grep "expire date:" | awk '{print $4, $5, $6, $7, $8}')
-          if [ -n "$expiry_days" ]; then
-            echo "✅ SSL certificate is valid until: $expiry_days"
-          else
-            echo "⚠️ Warning: Could not determine SSL certificate expiration"
-          fi
-
-      - name: Setup Monitoring
-        run: |
-          echo "🔧 Setting up monitoring..."
-          docker exec n8n-container /usr/local/bin/monitor.sh &
-          echo "✅ Monitoring started"
-
-      - name: Setup Initial Backup
-        run: |
-          echo "📦 Creating initial backup..."
-          if docker exec n8n-container /usr/local/bin/backup.sh; then
-            echo "✅ Initial backup created successfully"
-          else
-            echo "⚠️ Warning: Initial backup failed"
-          fi
-
-      - name: Deployment Summary
-        run: |
-          echo "🎉 Deployment completed successfully!"
-          echo "📝 Summary:"
-          echo "  - Application: https://${{ env.N8N_DOMAIN }}"
-          echo "  - Environment: ${{ steps.check_env.outputs.is_test == 'true' && 'TEST' || 'PRODUCTION' }}"
-          echo "  - Database: PostgreSQL"
-          echo "  - Monitoring: Active"
-          echo "  - Backup: Configured"
-          echo "  - SSL: Verified"
-
-      - name: Cleanup SSH key
-        if: always()
-        run: |
-          rm -f ~/.ssh/id_rsa*
+          go build -o deploy
+          ./deploy
