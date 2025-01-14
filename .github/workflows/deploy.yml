@@ -38,7 +38,7 @@ jobs:
     outputs:
       is_test_env: ${{ steps.check_env.outputs.is_test }}
       auth_password: ${{ steps.check_env.outputs.password }}
-      encryption_key: ${{ steps.encryption_key.outputs.key }}
+      encryption_key: ${{ steps.encryption_key.outputs.encryption_key }}
       domain: ${{ steps.check_env.outputs.domain }}
     steps:
       - name: Checkout code
@@ -186,10 +186,21 @@ jobs:
       - name: Setup Encryption Key
         id: setup_key
         run: |
+          echo "Debug: Encryption key from validate job: '${{ needs.validate.outputs.encryption_key }}'"
+          
           if [ -z "${{ needs.validate.outputs.encryption_key }}" ]; then
             echo "❌ Error: Encryption key not received from validate job"
             exit 1
           fi
+          
+          # Validar comprimento da chave antes de configurar
+          if [ ${#N8N_ENCRYPTION_KEY} -ne 32 ]; then
+            echo "❌ Error: Invalid encryption key length"
+            echo "Expected: 32 characters"
+            echo "Received: ${#N8N_ENCRYPTION_KEY} characters"
+            exit 1
+          fi
+          
           echo "N8N_ENCRYPTION_KEY=${{ needs.validate.outputs.encryption_key }}" >> $GITHUB_ENV
           echo "✅ Encryption key setup completed"
           echo "Key length: ${#N8N_ENCRYPTION_KEY}"
@@ -212,11 +223,13 @@ jobs:
           
           if [ -z "$N8N_ENCRYPTION_KEY" ]; then
             echo "❌ Error: N8N_ENCRYPTION_KEY is not set"
+            echo "Debug: Raw value: '$N8N_ENCRYPTION_KEY'"
             exit 1
           fi
           
           if [ ${#N8N_ENCRYPTION_KEY} -ne 32 ]; then
             echo "❌ Error: N8N_ENCRYPTION_KEY must be 32 characters long"
+            echo "Current length: ${#N8N_ENCRYPTION_KEY}"
             exit 1
           fi
           
@@ -228,6 +241,7 @@ jobs:
             echo "- DO Token exists: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN != '' }}"
             echo "- SSH Key Fingerprint exists: ${{ secrets.DO_SSH_KEY_FINGERPRINT != '' }}"
             echo "- Encryption Key exists: ${{ needs.validate.outputs.encryption_key != '' }}"
+            echo "- Encryption Key length: ${#N8N_ENCRYPTION_KEY}"
             exit 1
           fi
           
